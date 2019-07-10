@@ -11,14 +11,6 @@
 
 const lazyImports = require('./lazy-imports');
 
-function isTypeScriptSource(fileName) {
-  return !!fileName && fileName.endsWith('.ts');
-}
-
-function isTSXSource(fileName) {
-  return !!fileName && fileName.endsWith('.tsx');
-}
-
 const defaultPlugins = [
   [require('@babel/plugin-syntax-flow')],
   [require('@babel/plugin-proposal-optional-catch-binding')],
@@ -171,24 +163,17 @@ const getPreset = (src, options) => {
   return {
     comments: false,
     compact: true,
+    presets: [
+      // test file extensions for `ts` or `tsx` then transform accordingly
+      // with `@babel/plugin-transform-typescript`.
+      [require('@babel/preset-typescript').default],
+    ],
     overrides: [
       // the flow strip types plugin must go BEFORE class properties!
       // there'll be a test case that fails if you don't.
       flowPlugins,
       {
         plugins: defaultPlugins,
-      },
-      {
-        test: isTypeScriptSource,
-        plugins: [
-          [require('@babel/plugin-transform-typescript'), {isTSX: false}],
-        ],
-      },
-      {
-        test: isTSXSource,
-        plugins: [
-          [require('@babel/plugin-transform-typescript'), {isTSX: true}],
-        ],
       },
       {
         plugins: extraPlugins,
