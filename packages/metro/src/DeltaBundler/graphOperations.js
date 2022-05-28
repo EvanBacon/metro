@@ -36,9 +36,12 @@ import type {
   GraphInputOptions,
   Module,
   Options,
+  RequireContextParams,
   TransformResultDependency,
 } from './types.flow';
 
+const path = require('path');
+const crypto = require('crypto');
 const invariant = require('invariant');
 const nullthrows = require('nullthrows');
 
@@ -458,6 +461,10 @@ function removeDependency<T>(
   }
 }
 
+function getContextHash(ctx: RequireContextParams): string {
+  return crypto.createHash('sha1').update(JSON.stringify(ctx)).digest('hex');
+}
+
 function resolveDependencies<T>(
   parentPath: string,
   dependencies: $ReadOnlyArray<TransformResultDependency>,
@@ -465,6 +472,20 @@ function resolveDependencies<T>(
 ): Map<string, Dependency> {
   const resolve = (parentPath: string, result: TransformResultDependency) => {
     const relativePath = result.name;
+
+    // `require.context`
+    if (result.data.contextParams) {
+      const hash = getContextHash(result.data.contextParams);
+      const absolutePath = path.join(parentPath, relativePath);
+      return [
+        hash,
+        {
+          absolutePath,
+          data: result,
+        },
+      ];
+    }
+
     try {
       return [
         relativePath,
