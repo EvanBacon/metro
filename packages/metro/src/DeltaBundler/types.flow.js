@@ -115,6 +115,13 @@ export type TransformResultWithSource<T = MixedOutput> = $ReadOnly<{
 export type TransformFn<T = MixedOutput> = string => Promise<
   TransformResultWithSource<T>,
 >;
+
+/** Transformer for generating `require.context` virtual module. */
+export type TransformContextFn<T = MixedOutput> = (
+  string,
+  RequireContextParams,
+) => Promise<TransformResultWithSource<T>>;
+
 export type AllowOptionalDependenciesWithOptions = {
   +exclude: Array<string>,
 };
@@ -125,6 +132,8 @@ export type AllowOptionalDependencies =
 export type Options<T = MixedOutput> = {
   +resolve: (from: string, to: string) => string,
   +transform: TransformFn<T>,
+  /** Given a path and require context, return a virtual context module. */
+  +transformContext: TransformContextFn<T>,
   +transformOptions: TransformInputOptions,
   +onProgress: ?(numProcessed: number, total: number) => mixed,
   +experimentalImportBundleSupport: boolean,

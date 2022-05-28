@@ -66,6 +66,7 @@ class Transformer {
   async transformFile(
     filePath: string,
     transformerOptions: TransformOptions,
+    fileBuffer?: Buffer,
   ): Promise<TransformResultWithSource<>> {
     const cache = this._cache;
 
@@ -127,7 +128,11 @@ class Transformer {
     // the transformer to computed the corresponding result.
     const data = result
       ? {result, sha1}
-      : await this._workerFarm.transform(localPath, transformerOptions);
+      : await this._workerFarm.transform(
+          localPath,
+          transformerOptions,
+          fileBuffer,
+        );
 
     // Only re-compute the full key if the SHA-1 changed. This is because
     // references are used by the cache implementation in a weak map to keep

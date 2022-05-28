@@ -12,7 +12,11 @@
 
 import type Bundler from '../Bundler';
 import type DeltaBundler, {TransformFn} from '../DeltaBundler';
-import type {TransformInputOptions} from '../DeltaBundler/types.flow';
+import type {
+  RequireContextParams,
+  TransformContextFn,
+  TransformInputOptions,
+} from '../DeltaBundler/types.flow';
 import type {TransformOptions} from '../DeltaBundler/Worker';
 import type {ConfigT} from 'metro-config/src/configTypes.flow';
 import type {Type} from 'metro-transform-worker';
@@ -60,6 +64,16 @@ async function calcTransformerOptions(
   const getDependencies = async (path: string) => {
     const dependencies = await deltaBundler.getDependencies([path], {
       resolve: await getResolveDependencyFn(bundler, options.platform),
+      transformContext: await getTransformContextFn(
+        [path],
+        bundler,
+        deltaBundler,
+        config,
+        {
+          ...options,
+          minify: false,
+        },
+      ),
       transform: await getTransformFn([path], bundler, deltaBundler, config, {
         ...options,
         minify: false,
@@ -101,6 +115,54 @@ function removeInlineRequiresBlockListFromOptions(
   }
 
   return inlineRequires;
+}
+
+/** Generate the default method for transforming a `require.context` module. */
+async function getTransformContextFn(
+  entryFiles: $ReadOnlyArray<string>,
+  bundler: Bundler,
+  deltaBundler: DeltaBundler<>,
+  config: ConfigT,
+  options: TransformInputOptions,
+): Promise<TransformContextFn<>> {
+  const {inlineRequires, ...transformOptions} = await calcTransformerOptions(
+    entryFiles,
+    bundler,
+    deltaBundler,
+    config,
+    options,
+  );
+
+  return async (path: string, requireContext: RequireContextParams) => {
+    const graph = await bundler.getDependencyGraph();
+    const files = graph.matchFilesWithContext(path, {
+      recursive: requireContext.recursive,
+      filter: requireContext.filter,
+    });
+
+    const mapping = files.map(file => {
+      return `${JSON.stringify(file)}: require("${file}"),`;
+    });
+    const template = `
+    const map = {
+      ${mapping.join('\n')}
+    }
+    map.keys = () => Object.keys(map);
+
+    module.exports = map;`;
+    return await bundler.transformVirtualFile(
+      path,
+      {
+        ...transformOptions,
+        type: getType(transformOptions.type, path, config.resolver.assetExts),
+        inlineRequires: removeInlineRequiresBlockListFromOptions(
+          path,
+          inlineRequires,
+        ),
+      },
+      Buffer.from(template),
+    );
+  };
 }
 
 async function getTransformFn(
@@ -159,5 +221,6 @@ async function getResolveDependencyFn(
 
 module.exports = {
   getTransformFn,
+  getTransformContextFn,
   getResolveDependencyFn,
 };

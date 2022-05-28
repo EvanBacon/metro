@@ -112,6 +112,13 @@ class IncrementalBundler {
         this._bundler,
         transformOptions.platform,
       ),
+      transformContext: await transformHelpers.getTransformContextFn(
+        absoluteEntryFiles,
+        this._bundler,
+        this._deltaBundler,
+        this._config,
+        transformOptions,
+      ),
       transform: await transformHelpers.getTransformFn(
         absoluteEntryFiles,
         this._bundler,
@@ -152,6 +159,13 @@ class IncrementalBundler {
         resolve: await transformHelpers.getResolveDependencyFn(
           this._bundler,
           transformOptions.platform,
+        ),
+        transformContext: await transformHelpers.getTransformContextFn(
+          absoluteEntryFiles,
+          this._bundler,
+          this._deltaBundler,
+          this._config,
+          transformOptions,
         ),
         transform: await transformHelpers.getTransformFn(
           absoluteEntryFiles,

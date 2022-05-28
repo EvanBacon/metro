@@ -76,6 +76,22 @@ class Bundler {
     return this._transformer.transformFile(filePath, transformOptions);
   }
 
+  async transformVirtualFile(
+    filePath: string,
+    transformOptions: TransformOptions,
+    fileBuffer: Buffer,
+  ): Promise<TransformResultWithSource<>> {
+    // We need to be sure that the DependencyGraph has been initialized.
+    // TODO: Remove this ugly hack!
+    await this._depGraph.ready();
+
+    return this._transformer.transformFile(
+      filePath,
+      transformOptions,
+      fileBuffer,
+    );
+  }
+
   // Waits for the bundler to become ready.
   async ready(): Promise<void> {
     await this._readyPromise;

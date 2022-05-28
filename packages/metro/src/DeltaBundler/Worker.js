@@ -56,6 +56,25 @@ async function transform(
   transformOptions: JsTransformOptions,
   projectRoot: string,
   transformerConfig: TransformerConfig,
+  fileBuffer?: Buffer,
+): Promise<Data> {
+  const data =
+    fileBuffer ?? fs.readFileSync(path.resolve(projectRoot, filename));
+  return transformFile(
+    filename,
+    data,
+    transformOptions,
+    projectRoot,
+    transformerConfig,
+  );
+}
+
+async function transformFile(
+  filename: string,
+  data: Buffer,
+  transformOptions: JsTransformOptions,
+  projectRoot: string,
+  transformerConfig: TransformerConfig,
 ): Promise<Data> {
   // eslint-disable-next-line no-useless-call
   const Transformer = (require.call(
@@ -71,7 +90,6 @@ async function transform(
     start_timestamp: process.hrtime(),
   };
 
-  const data = fs.readFileSync(path.resolve(projectRoot, filename));
   const sha1 = crypto.createHash('sha1').update(data).digest('hex');
 
   const result = await Transformer.transform(

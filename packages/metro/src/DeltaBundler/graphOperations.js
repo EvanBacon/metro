@@ -116,11 +116,13 @@ type InternalOptions<T> = $ReadOnly<{
   onDependencyAdded: () => mixed,
   resolve: Options<T>['resolve'],
   transform: Options<T>['transform'],
+  transformContext: Options<T>['transformContext'],
   shallow: boolean,
 }>;
 
 function getInternalOptions<T>({
   transform,
+  transformContext,
   resolve,
   onProgress,
   experimentalImportBundleSupport,
@@ -132,6 +134,7 @@ function getInternalOptions<T>({
   return {
     experimentalImportBundleSupport,
     transform,
+    transformContext,
     resolve,
     onDependencyAdd: () => onProgress && onProgress(numProcessed, ++total),
     onDependencyAdded: () => onProgress && onProgress(++numProcessed, total),
@@ -266,10 +269,13 @@ async function processModule<T>(
   graph: Graph<T>,
   delta: Delta,
   options: InternalOptions<T>,
+  contextParams?: RequireContextParams,
 ): Promise<Module<T>> {
   // Transform the file via the given option.
   // TODO: Unbind the transform method from options
-  const result = await options.transform(path);
+  const result = await (!!contextParams
+    ? options.transformContext(path, contextParams)
+    : options.transform(path));
 
   // Get the absolute path of all sub-dependencies (some of them could have been
   // moved but maintain the same relative path).
@@ -403,7 +409,13 @@ async function addDependency<T>(
         delta.earlyInverseDependencies.set(path, new Set([parentModule.path]));
 
         options.onDependencyAdd();
-        module = await processModule(path, graph, delta, options);
+        module = await processModule(
+          path,
+          graph,
+          delta,
+          options,
+          dependency.data.data.contextParams,
+        );
         options.onDependencyAdded();
 
         graph.dependencies.set(module.path, module);
