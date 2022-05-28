@@ -37,6 +37,18 @@ export type Dependency<TSplitCondition> = $ReadOnly<{
   name: string,
 }>;
 
+// TODO: Convert to a Flow enum
+type ContextMode = 'sync' | 'eager' | 'lazy' | 'lazy-once';
+
+type RequireContextParams = $ReadOnly<{
+  /* Should search for files recursively. Optional, default `true` when `require.context` is used */
+  recursive: boolean,
+  /* Filename filter pattern for use in `require.context`. Optional, default `/^\.\/.*$/` (any file) when `require.context` is used */
+  filter: RegExp,
+  /** Mode for resolving dynamic dependencies. Defaults to `sync` */
+  mode: ContextMode,
+}>;
+
 type DependencyData<TSplitCondition> = $ReadOnly<{
   // If null, then the dependency is synchronous.
   // (ex. `require('foo')`)
@@ -45,6 +57,7 @@ type DependencyData<TSplitCondition> = $ReadOnly<{
   // If left unspecified, then the dependency is unconditionally split.
   splitCondition?: TSplitCondition,
   locs: Array<BabelSourceLocation>,
+  contextParams?: RequireContextParams,
 }>;
 
 export type MutableInternalDependency<TSplitCondition> = {
@@ -66,6 +79,8 @@ export type State<TSplitCondition> = {
   dependencyMapIdentifier: ?Identifier,
   keepRequireNames: boolean,
   allowOptionalDependencies: AllowOptionalDependencies,
+  /** Enable `require.context` statements which can be used to import multiple files in a directory. */
+  unstable_allowRequireContext: boolean,
 };
 
 export type Options<TSplitCondition = void> = $ReadOnly<{
@@ -77,6 +92,8 @@ export type Options<TSplitCondition = void> = $ReadOnly<{
   allowOptionalDependencies: AllowOptionalDependencies,
   dependencyRegistry?: ModuleDependencyRegistry<TSplitCondition>,
   dependencyTransformer?: DependencyTransformer<TSplitCondition>,
+  /** Enable `require.context` statements which can be used to import multiple files in a directory. */
+  unstable_allowRequireContext: boolean,
 }>;
 
 export type CollectedDependencies<+TSplitCondition> = $ReadOnly<{
@@ -87,9 +104,26 @@ export type CollectedDependencies<+TSplitCondition> = $ReadOnly<{
 
 // Registry for the dependency of a module.
 // Defines when dependencies should be collapsed.
-// E.g. should a module that's once required optinally and once not
-// be tretaed as the smae or different dependencies.
+// E.g. should a module that's once required optionally and once not
+// be treated as the same or different dependencies.
 export interface ModuleDependencyRegistry<+TSplitCondition> {
+  /**
+   * Given an import qualifier, return a key used to register the dependency.
+   * Generally this return the `ImportQualifier.name` property, but in the case
+   * of `require.context` more attributes can be appended to distinguish various combinations that would otherwise conflict.
+   *
+   * For example, the following case would have collision issues if they all utilized the `name` property:
+   * ```
+   * require('./foo');
+   * require.context('./foo');
+   * require.context('./foo', true, /something/);
+   * require.context('./foo', false, /something/);
+   * require.context('./foo', false, /something/, 'lazy');
+   * ```
+   *
+   * This method should be utilized by `registerDependency`.
+   */
+  getKeyForDependency(qualifier: ImportQualifier): string;
   registerDependency(
     qualifier: ImportQualifier,
   ): InternalDependency<TSplitCondition>;
@@ -151,6 +185,7 @@ function collectDependencies<TSplitCondition = void>(
     dynamicRequires: options.dynamicRequires,
     keepRequireNames: options.keepRequireNames,
     allowOptionalDependencies: options.allowOptionalDependencies,
+    unstable_allowRequireContext: options.unstable_allowRequireContext,
   };
 
   const visitor = {
@@ -196,6 +231,26 @@ function collectDependencies<TSplitCondition = void>(
           jsResource: true,
           splitCondition: args[1],
         });
+        return;
+      }
+
+      // Match `require.context`
+      if (
+        // Feature gate, defaults to `false`.
+        state.unstable_allowRequireContext &&
+        callee.type === 'MemberExpression' &&
+        // `require`
+        callee.object.type === 'Identifier' &&
+        callee.object.name === 'require' &&
+        // `context`
+        callee.property.type === 'Identifier' &&
+        callee.property.name === 'context' &&
+        !callee.computed &&
+        // Ensure `require` refers to the global and not something else.
+        !path.scope.getBinding('require')
+      ) {
+        processRequireContextCall(path, state);
+        visited.add(path.node);
         return;
       }
 
@@ -249,6 +304,123 @@ function collectDependencies<TSplitCondition = void>(
     dependencies,
     dependencyMapName: nullthrows(state.dependencyMapIdentifier).name,
   };
+}
+
+/** Extract args passed to the `require.context` method. */
+function getRequireContextArgs(
+  path: NodePath<CallExpression>,
+): [string, RequireContextParams] {
+  const args = path.get('arguments');
+
+  let directory: string;
+  if (!Array.isArray(args) || args.length < 1) {
+    throw new InvalidRequireCallError(path);
+  } else {
+    const argNode = args[0].node;
+    if (argNode.type !== 'StringLiteral') {
+      throw new InvalidRequireCallError(
+        args[0],
+        `First argument of \`require.context\` should be a string denoting the directory to require, instead found node of type: ${argNode.type}.`,
+      );
+    }
+    directory = argNode.value;
+  }
+
+  // Default to requiring through all directories.
+  let recursive: boolean = true;
+  if (args.length > 1) {
+    const argNode = args[1].node;
+    if (argNode.type !== 'BooleanLiteral') {
+      throw new InvalidRequireCallError(
+        args[1],
+        `Second argument of \`require.context\` should be an optional boolean indicating if files should be imported recursively or not, instead found node of type: ${argNode.type}.`,
+      );
+    }
+    recursive = argNode.value;
+  }
+
+  // Default to all files.
+  let filter = /^\.\/.*$/;
+  if (args.length > 2) {
+    const argNode = args[2].node;
+    if (argNode.type !== 'RegExpLiteral') {
+      // TODO: Handle `new RegExp(...)` -- `argNode.type === 'NewExpression'`
+      throw new InvalidRequireCallError(
+        args[2],
+        `Third argument of \`require.context\` should be an optional RegExp pattern matching all of the files to import, instead found node of type: ${argNode.type}.`,
+      );
+    }
+    filter = new RegExp(argNode.pattern, argNode.flags);
+  }
+
+  // Default to `sync`.
+  let mode: ContextMode = 'sync';
+  if (args.length > 3) {
+    const argNode = args[3].node;
+    if (argNode.type !== 'StringLiteral') {
+      throw new InvalidRequireCallError(
+        args[3],
+        `Fourth argument of \`require.context\` should be an optional string "mode" denoting how the modules will be resolved, instead found node of type: ${argNode.type}.`,
+      );
+    }
+    mode = getContextMode(args[3], argNode.value);
+  }
+
+  if (args.length > 4) {
+    throw new InvalidRequireCallError(
+      path,
+      `Too many arguments provided to \`require.context\` call. Expected 4, got: ${args.length}`,
+    );
+  }
+
+  return [
+    directory,
+    {
+      recursive,
+      filter,
+      mode,
+    },
+  ];
+}
+
+function getContextMode(path: NodePath<any>, mode: string): ContextMode {
+  if (
+    mode === 'sync' ||
+    mode === 'eager' ||
+    mode === 'lazy' ||
+    mode === 'lazy-once'
+  ) {
+    return mode;
+  }
+  throw new InvalidRequireCallError(
+    path,
+    `require.context "${mode}" mode is not supported. Expected one of: sync, eager, lazy, lazy-once`,
+  );
+}
+
+collectDependencies.getRequireContextArgs = getRequireContextArgs;
+
+function processRequireContextCall<TSplitCondition>(
+  path: NodePath<CallExpression>,
+  state: State<TSplitCondition>,
+): void {
+  const [directory, contextParams] = getRequireContextArgs(path);
+  const transformer = state.dependencyTransformer;
+  const dep = registerDependency(
+    state,
+    {
+      // We basically want to "import" every file in a folder and then filter them out with the given `filter` RegExp.
+      name: directory,
+      // Capture the matching context
+      contextParams,
+      asyncType: null,
+      optional: isOptionalDependency(directory, path, state),
+    },
+    path,
+  );
+
+  // require() the generated module representing this context
+  transformer.transformSyncRequire(path, dep, state);
 }
 
 function collectImports<TSplitCondition>(
@@ -344,6 +516,7 @@ export type ImportQualifier = $ReadOnly<{
   asyncType: AsyncDependencyType | null,
   splitCondition?: NodePath<>,
   optional: boolean,
+  contextParams?: RequireContextParams,
 }>;
 
 function registerDependency<TSplitCondition>(
@@ -352,7 +525,6 @@ function registerDependency<TSplitCondition>(
   path: NodePath<>,
 ): InternalDependency<TSplitCondition> {
   const dependency = state.dependencyRegistry.registerDependency(qualifier);
-
   const loc = getNearestLocFromPath(path);
   if (loc != null) {
     dependency.locs.push(loc);
@@ -419,14 +591,20 @@ function getModuleNameFromCallArgs(path: NodePath<CallExpression>): ?string {
 
   return null;
 }
+
 collectDependencies.getModuleNameFromCallArgs = getModuleNameFromCallArgs;
 
 class InvalidRequireCallError extends Error {
-  constructor({node}: any) {
+  constructor({node}: any, message?: string) {
     const line = node.loc && node.loc.start && node.loc.start.line;
 
     super(
-      `Invalid call at line ${line || '<unknown>'}: ${generate(node).code}`,
+      [
+        `Invalid call at line ${line || '<unknown>'}: ${generate(node).code}`,
+        message,
+      ]
+        .filter(Boolean)
+        .join('\n'),
     );
   }
 }
@@ -469,9 +647,11 @@ const DefaultDependencyTransformer: DependencyTransformer<mixed> = {
     state: State<mixed>,
   ): void {
     const moduleIDExpression = createModuleIDExpression(dependency, state);
-    path.node.arguments = state.keepRequireNames
-      ? [moduleIDExpression, types.stringLiteral(dependency.name)]
-      : [moduleIDExpression];
+    path.node.arguments = [moduleIDExpression];
+    // Always add the debug name argument last
+    if (state.keepRequireNames) {
+      path.node.arguments.push(types.stringLiteral(dependency.name));
+    }
   },
 
   transformImportCall(
@@ -551,11 +731,34 @@ class DefaultModuleDependencyRegistry<TSplitCondition = void>
 {
   _dependencies: Map<string, InternalDependency<TSplitCondition>> = new Map();
 
+  /** Default key resolver. */
+  getKeyForDependency(qualifier: ImportQualifier): string {
+    let key = qualifier.name;
+
+    const {contextParams} = qualifier;
+    // Add extra qualifiers when using `require.context` to prevent collisions.
+    if (contextParams) {
+      // NOTE(EvanBacon): Keep this synchronized with `RequireContextParams`, if any other properties are added
+      // then this key algorithm should be updated to account for those properties.
+      // Example: `./directory__true__/foobar/m__lazy`
+      key += [
+        '',
+        'context',
+        String(contextParams.recursive),
+        String(contextParams.filter),
+        contextParams.mode,
+        // Join together and append to the name:
+      ].join('__');
+    }
+    return key;
+  }
+
   registerDependency(
     qualifier: ImportQualifier,
   ): InternalDependency<TSplitCondition> {
+    const key = this.getKeyForDependency(qualifier);
     let dependency: ?InternalDependency<TSplitCondition> =
-      this._dependencies.get(qualifier.name);
+      this._dependencies.get(key);
 
     if (dependency == null) {
       const newDependency: MutableInternalDependency<TSplitCondition> = {
@@ -568,14 +771,17 @@ class DefaultModuleDependencyRegistry<TSplitCondition = void>
       if (qualifier.optional) {
         newDependency.isOptional = true;
       }
+      if (qualifier.contextParams) {
+        newDependency.contextParams = qualifier.contextParams;
+      }
 
       dependency = newDependency;
-      this._dependencies.set(qualifier.name, dependency);
+      this._dependencies.set(key, dependency);
     } else {
       const original = dependency;
       dependency = collapseDependencies(original, qualifier);
       if (original !== dependency) {
-        this._dependencies.set(qualifier.name, dependency);
+        this._dependencies.set(key, dependency);
       }
     }
 
@@ -586,6 +792,9 @@ class DefaultModuleDependencyRegistry<TSplitCondition = void>
     return Array.from(this._dependencies.values());
   }
 }
+
+collectDependencies.DefaultModuleDependencyRegistry =
+  DefaultModuleDependencyRegistry;
 
 function collapseDependencies<TSplitCondition>(
   dependency: InternalDependency<TSplitCondition>,

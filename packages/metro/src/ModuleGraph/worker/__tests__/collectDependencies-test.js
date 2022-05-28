@@ -32,7 +32,8 @@ const nullthrows = require('nullthrows');
 
 const {any, objectContaining} = expect;
 
-const {InvalidRequireCallError} = collectDependencies;
+const {InvalidRequireCallError, DefaultModuleDependencyRegistry} =
+  collectDependencies;
 const opts = {
   asyncRequireModulePath: 'asyncRequire',
   dynamicRequires: 'reject',
@@ -41,6 +42,219 @@ const opts = {
   allowOptionalDependencies: false,
   dependencyMapName: null,
 };
+
+describe('DefaultModuleDependencyRegistry', () => {
+  describe('getKeyForDependency', () => {
+    it(`generates basic key`, () => {
+      const registry = new DefaultModuleDependencyRegistry();
+      expect(
+        registry.getKeyForDependency({
+          name: './file.js',
+          optional: false,
+          asyncType: null,
+        }),
+      ).toBe('./file.js');
+    });
+    it(`generates require.context key`, () => {
+      const registry = new DefaultModuleDependencyRegistry();
+
+      expect(
+        registry.getKeyForDependency({
+          name: './dir',
+          optional: false,
+          asyncType: null,
+          contextParams: {
+            recursive: true,
+            filter: /foobar/,
+            mode: 'lazy',
+          },
+        }),
+      ).toBe('./dir__context__true__/foobar/__lazy');
+    });
+  });
+
+  it(`registers dependencies without collision`, () => {
+    const registry = new DefaultModuleDependencyRegistry();
+
+    registry.registerDependency({
+      name: './dir',
+      optional: false,
+      asyncType: null,
+    });
+
+    registry.registerDependency({
+      name: './dir',
+      optional: false,
+      asyncType: null,
+      contextParams: {
+        recursive: true,
+        filter: /foobar/,
+        mode: 'lazy',
+      },
+    });
+
+    expect(registry.getDependencies()).toEqual([
+      {
+        asyncType: undefined,
+        index: 0,
+        locs: [],
+        name: './dir',
+      },
+      {
+        asyncType: undefined,
+        contextParams: {
+          filter: /foobar/,
+          mode: 'lazy',
+          recursive: true,
+        },
+        index: 1,
+        locs: [],
+        name: './dir',
+      },
+    ]);
+  });
+});
+
+describe(`require.context`, () => {
+  it(`collects require context arguments`, () => {
+    const ast = astFromCode(`
+  const a = require.context('./', false, /foobar/m, 'eager');
+  const b = require.context('./baz');
+`);
+    const {dependencies, dependencyMapName} = collectDependencies(ast, {
+      ...opts,
+      unstable_allowRequireContext: true,
+    });
+
+    expect(dependencies).toEqual([
+      {
+        name: './',
+        data: objectContaining({
+          contextParams: {
+            filter: /foobar/m,
+            mode: 'eager',
+            recursive: false,
+          },
+        }),
+      },
+      {
+        name: './baz',
+        data: objectContaining({
+          contextParams: {
+            filter: /^\.\/.*$/,
+            mode: 'sync',
+            recursive: true,
+          },
+        }),
+      },
+    ]);
+
+    expect(codeFromAst(ast)).toEqual(
+      comparableCode(`
+      const a = require.context(${dependencyMapName}[0], "./");
+      const b = require.context(${dependencyMapName}[1], "./baz");
+    `),
+    );
+  });
+
+  it(`asserts invalid first argument`, () => {
+    const ast = astFromCode(`
+  const a = require.context(42);
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "Invalid call at line 2: 42
+      First argument of \`require.context\` should be a string denoting the directory to require, instead found node of type: NumericLiteral."
+    `);
+  });
+  it(`asserts invalid second argument`, () => {
+    const ast = astFromCode(`
+  const a = require.context('./dir', 'hey');
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "Invalid call at line 2: 'hey'
+      Second argument of \`require.context\` should be an optional boolean indicating if files should be imported recursively or not, instead found node of type: StringLiteral."
+    `);
+  });
+  it(`asserts invalid third argument`, () => {
+    const ast = astFromCode(`
+  const a = require.context('./dir', false, new RegExp('foobar'));
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "Invalid call at line 2: new RegExp('foobar')
+      Third argument of \`require.context\` should be an optional RegExp pattern matching all of the files to import, instead found node of type: NewExpression."
+    `);
+  });
+  it(`asserts invalid fourth argument`, () => {
+    const ast = astFromCode(`
+  const a = require.context('./dir', false, /foobar/, 34);
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "Invalid call at line 2: 34
+      Fourth argument of \`require.context\` should be an optional string \\"mode\\" denoting how the modules will be resolved, instead found node of type: NumericLiteral."
+    `);
+  });
+  it(`asserts invalid fourth argument enum value`, () => {
+    const ast = astFromCode(`
+  const a = require.context('./dir', false, /foobar/, 'hello');
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "Invalid call at line 2: 'hello'
+      require.context \\"hello\\" mode is not supported. Expected one of: sync, eager, lazy, lazy-once"
+    `);
+  });
+  it(`asserts too many arguments`, () => {
+    const ast = astFromCode(`
+  const a = require.context('./dir', false, /foobar/, 'sync', 'hey');
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(`
+      "Invalid call at line 2: require.context('./dir', false, /foobar/, 'sync', 'hey')
+      Too many arguments provided to \`require.context\` call. Expected 4, got: 5"
+    `);
+  });
+  it(`asserts no arguments`, () => {
+    const ast = astFromCode(`
+  const a = require.context();
+`);
+    expect(() =>
+      collectDependencies(ast, {
+        ...opts,
+        unstable_allowRequireContext: true,
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `"Invalid call at line 2: require.context()"`,
+    );
+  });
+});
 
 it('collects unique dependency identifiers and transforms the AST', () => {
   const ast = astFromCode(`
