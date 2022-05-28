@@ -8,8 +8,9 @@
  * @flow strict-local
  */
 
-import type {FileData, Path} from './flow-types';
+import {sep} from 'path';
 
+import type {FileData, Path} from './flow-types';
 import H from './constants';
 import * as fastPath from './lib/fast_path';
 // $FlowFixMe[untyped-import] - jest-util
@@ -78,6 +79,37 @@ export default class HasteFS {
     const files = [];
     for (const file of this.getAbsoluteFileIterator()) {
       if (regexpPattern.test(file)) {
+        files.push(file);
+      }
+    }
+    return files;
+  }
+
+  /** Given a search context, return a list of file paths matching the query. */
+  matchFilesWithContext(
+    root: Path,
+    context: $ReadOnly<{
+      /* Should search for files recursively. */
+      recursive: boolean,
+      /* Filter relative paths against a pattern. */
+      filter: RegExp,
+    }>,
+  ): Array<Path> {
+    const files = [];
+    for (const file of this.getAbsoluteFileIterator()) {
+      const filePath = fastPath.relative(root, file);
+
+      // Ignore everything outside of the provided `root`.
+      if (filePath.startsWith('..')) {
+        continue;
+      }
+
+      // Prevent searching in child directories during a non-recursive search.
+      if (!context.recursive && filePath.includes(sep)) {
+        continue;
+      }
+
+      if (context.filter.test(filePath)) {
         files.push(file);
       }
     }
