@@ -133,7 +133,11 @@ async function getTransformContextFn(
     options,
   );
 
-  return async (modulePath: string, requireContext: RequireContextParams) => {
+  return async (
+    modulePathWithHash: string,
+    requireContext: RequireContextParams,
+  ) => {
+    const [modulePath] = modulePathWithHash.split('$$_context_$$');
     const graph = await bundler.getDependencyGraph();
     const filter = new RegExp(
       requireContext.filter.pattern,

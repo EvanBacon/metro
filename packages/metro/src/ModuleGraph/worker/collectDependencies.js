@@ -44,7 +44,7 @@ type RequireContextParams = $ReadOnly<{
   /* Should search for files recursively. Optional, default `true` when `require.context` is used */
   recursive: boolean,
   /* Filename filter pattern for use in `require.context`. Optional, default `/^\.\/.*$/` (any file) when `require.context` is used */
-  filter: string,
+  filter: {pattern: string, flags?: string},
   /** Mode for resolving dynamic dependencies. Defaults to `sync` */
   mode: ContextMode,
 }>;
@@ -745,7 +745,8 @@ class DefaultModuleDependencyRegistry<TSplitCondition = void>
         '',
         'context',
         String(contextParams.recursive),
-        String(contextParams.filter),
+        String(contextParams.filter.pattern),
+        String(contextParams.filter.flags),
         contextParams.mode,
         // Join together and append to the name:
       ].join('__');

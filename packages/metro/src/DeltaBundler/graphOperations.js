@@ -271,10 +271,12 @@ async function processModule<T>(
   options: InternalOptions<T>,
   contextParams?: RequireContextParams,
 ): Promise<Module<T>> {
+  const resolvedContextParams =
+    contextParams || (graph.dependencies.get(path) || {}).contextParams;
   // Transform the file via the given option.
   // TODO: Unbind the transform method from options
-  const result = await (!!contextParams
-    ? options.transformContext(path, contextParams)
+  const result = await (resolvedContextParams
+    ? options.transformContext(path, resolvedContextParams)
     : options.transform(path));
 
   // Get the absolute path of all sub-dependencies (some of them could have been
@@ -294,6 +296,7 @@ async function processModule<T>(
   // Update the module information.
   const module = {
     ...previousModule,
+    contextParams,
     dependencies: new Map(previousDependencies),
     getSource: result.getSource,
     output: result.output,
@@ -488,12 +491,15 @@ function resolveDependencies<T>(
     // `require.context`
     if (result.data.contextParams) {
       const hash = getContextHash(result.data.contextParams);
-      const absolutePath = path.join(parentPath, '..', relativePath);
+      const absolutePath =
+        // path.join(parentPath, '..', relativePath);
+        path.join(parentPath, '..', relativePath) + '$$_context_$$' + hash;
       return [
         hash,
         {
           absolutePath,
           data: result,
+          contextParams: result.data.contextParams,
         },
       ];
     }

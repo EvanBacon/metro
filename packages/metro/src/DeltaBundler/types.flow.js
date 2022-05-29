@@ -27,7 +27,7 @@ export type RequireContextParams = $ReadOnly<{
   /* Should search for files recursively. Optional, default `true` when `require.context` is used */
   recursive: boolean,
   /* Filename filter pattern for use in `require.context`. Optional, default `/^\.\/.*$/` (any file) when `require.context` is used */
-  filter: RegExp,
+  filter: {pattern: string, flags?: string},
   /** Mode for resolving dynamic dependencies. Defaults to `sync` */
   mode: ContextMode,
 }>;
@@ -71,6 +71,7 @@ export type Dependency = {
 };
 
 export type Module<T = MixedOutput> = {
+  +contextParams?: RequireContextParams,
   +dependencies: Map<string, Dependency>,
   +inverseDependencies: Set<string>,
   +output: $ReadOnlyArray<T>,
