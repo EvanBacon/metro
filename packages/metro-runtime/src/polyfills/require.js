@@ -259,6 +259,8 @@ function metroImportAll(moduleId: ModuleID | VerboseModuleNameForDev | number) {
 }
 metroRequire.importAll = metroImportAll;
 
+metroRequire.context = (...args) => metroRequire(...args);
+
 let inGuard = false;
 function guardedLoadModule(
   moduleId: ModuleID,

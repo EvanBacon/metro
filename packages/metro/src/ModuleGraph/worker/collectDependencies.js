@@ -44,7 +44,7 @@ type RequireContextParams = $ReadOnly<{
   /* Should search for files recursively. Optional, default `true` when `require.context` is used */
   recursive: boolean,
   /* Filename filter pattern for use in `require.context`. Optional, default `/^\.\/.*$/` (any file) when `require.context` is used */
-  filter: RegExp,
+  filter: string,
   /** Mode for resolving dynamic dependencies. Defaults to `sync` */
   mode: ContextMode,
 }>;
@@ -340,7 +340,7 @@ function getRequireContextArgs(
   }
 
   // Default to all files.
-  let filter = /^\.\/.*$/;
+  let filter = {pattern: '.*'}; // /^\.\/.*$/.toString();
   if (args.length > 2) {
     const argNode = args[2].node;
     if (argNode.type !== 'RegExpLiteral') {
@@ -350,7 +350,7 @@ function getRequireContextArgs(
         `Third argument of \`require.context\` should be an optional RegExp pattern matching all of the files to import, instead found node of type: ${argNode.type}.`,
       );
     }
-    filter = new RegExp(argNode.pattern, argNode.flags);
+    filter = {pattern: argNode.pattern, flags: argNode.flags};
   }
 
   // Default to `sync`.

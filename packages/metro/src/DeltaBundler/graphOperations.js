@@ -488,7 +488,7 @@ function resolveDependencies<T>(
     // `require.context`
     if (result.data.contextParams) {
       const hash = getContextHash(result.data.contextParams);
-      const absolutePath = path.join(parentPath, relativePath);
+      const absolutePath = path.join(parentPath, '..', relativePath);
       return [
         hash,
         {

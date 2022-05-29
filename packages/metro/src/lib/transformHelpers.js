@@ -133,30 +133,40 @@ async function getTransformContextFn(
     options,
   );
 
-  return async (path: string, requireContext: RequireContextParams) => {
+  return async (modulePath: string, requireContext: RequireContextParams) => {
     const graph = await bundler.getDependencyGraph();
-    const files = graph.matchFilesWithContext(path, {
+    const filter = new RegExp(
+      requireContext.filter.pattern,
+      requireContext.filter.flags,
+    );
+    const files = graph.matchFilesWithContext(modulePath, {
       recursive: requireContext.recursive,
-      filter: requireContext.filter,
+      filter,
     });
 
     const mapping = files.map(file => {
-      return `${JSON.stringify(file)}: require("${file}"),`;
+      const filePath = path.relative(modulePath, file);
+      return `${JSON.stringify(
+        filePath.slice(0, -path.extname(filePath).length),
+      )}: require("${file}"),`;
     });
     const template = `
     const map = {
       ${mapping.join('\n')}
     }
-    map.keys = () => Object.keys(map);
 
     module.exports = map;`;
     return await bundler.transformVirtualFile(
-      path,
+      modulePath,
       {
         ...transformOptions,
-        type: getType(transformOptions.type, path, config.resolver.assetExts),
+        type: getType(
+          transformOptions.type,
+          modulePath,
+          config.resolver.assetExts,
+        ),
         inlineRequires: removeInlineRequiresBlockListFromOptions(
-          path,
+          modulePath,
           inlineRequires,
         ),
       },

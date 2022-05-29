@@ -58,8 +58,13 @@ async function transform(
   transformerConfig: TransformerConfig,
   fileBuffer?: Buffer,
 ): Promise<Data> {
-  const data =
-    fileBuffer ?? fs.readFileSync(path.resolve(projectRoot, filename));
+  let data;
+
+  if (fileBuffer && fileBuffer.type === 'Buffer') {
+    data = Buffer.from(fileBuffer.data);
+  } else {
+    data = fs.readFileSync(path.resolve(projectRoot, filename));
+  }
   return transformFile(
     filename,
     data,
