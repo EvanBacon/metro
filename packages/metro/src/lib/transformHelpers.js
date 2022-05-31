@@ -148,18 +148,27 @@ async function getTransformContextFn(
       filter,
     });
 
-    const mapping = files.map(file => {
-      const filePath = path.relative(modulePath, file);
-      return `${JSON.stringify(
-        filePath.slice(0, -path.extname(filePath).length),
-      )}: require("${file}"),`;
-    });
-    const template = `
-    const map = {
-      ${mapping.join('\n')}
-    }
+    let mapString = '';
 
-    module.exports = map;`;
+    files.map(file => {
+      let filePath = path.relative(modulePath, file);
+
+      // Prevent require cycles.
+      if (filePath) {
+        // Ensure we have the starting `./`
+        if (!filePath.startsWith('.')) {
+          filePath += `.${path.sep}`;
+        }
+        const key = JSON.stringify(filePath);
+        mapString += `${key}: require("${file}"),`;
+      }
+    });
+
+    const template = `
+    const map = {${mapString}}
+
+    module.exports = (key) => map[key];
+    module.exports.keys = () => Object.keys(map)`;
     return await bundler.transformVirtualFile(
       modulePath,
       {
