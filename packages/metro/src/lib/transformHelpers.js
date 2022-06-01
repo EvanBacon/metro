@@ -157,7 +157,7 @@ async function getTransformContextFn(
       if (filePath) {
         // Ensure we have the starting `./`
         if (!filePath.startsWith('.')) {
-          filePath += `.${path.sep}`;
+          filePath = `.${path.sep}` + filePath;
         }
         const key = JSON.stringify(filePath);
         mapString += `${key}: require("${file}"),`;
