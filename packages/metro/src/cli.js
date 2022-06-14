@@ -13,7 +13,7 @@
 
 try {
   // $FlowFixMe[untyped-import]
-  require('metro-babel-register').registerForMetroMonorepo();
+  require('metro-babel-register').unstable_registerForMetroMonorepo();
 } catch {}
 
 const {attachMetroCli} = require('./index');

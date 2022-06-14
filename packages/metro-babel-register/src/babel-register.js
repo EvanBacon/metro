@@ -112,10 +112,12 @@ function registerForMetroMonorepo() {
   if (isRegisteredForMetroMonorepo) {
     return;
   }
-  // Noop if we are in NODE_ENV=production or seem to be outside of the Metro
-  // source tree.
+  // Noop if we are in NODE_ENV=production.
+  if (process.env.NODE_ENV === 'production') {
+    return;
+  }
+  // Noop if we seem to be outside of the Metro source tree.
   if (
-    process.env.NODE_ENV !== 'production' &&
     !__dirname.endsWith(
       ['', 'packages', 'metro-babel-register', 'src'].join(path.sep),
     )
@@ -137,4 +139,4 @@ function registerForMetroMonorepo() {
 module.exports = register;
 module.exports.config = config;
 module.exports.buildRegExps = buildRegExps;
-module.exports.registerForMetroMonorepo = registerForMetroMonorepo;
+module.exports.unstable_registerForMetroMonorepo = registerForMetroMonorepo;
