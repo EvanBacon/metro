@@ -160,14 +160,18 @@ async function getTransformContextFn(
           filePath = `.${path.sep}` + filePath;
         }
         const key = JSON.stringify(filePath);
-        mapString += `${key}: require("${file}"),`;
+        mapString += `${key}: { get() { return require("${file}") } },`;
+        // mapString += `${key}: require("${file}"),`;
       }
     });
 
+    // TODO: All source types https://github.com/webpack/webpack/blob/e2f1592f7e4d8f0578e5bb23d6a863b4a2b5f309/lib/ContextModule.js#L741
     const template = `
-    const map = {${mapString}}
+    const map = Object.defineProperties({}, {${mapString}}) 
 
     module.exports = (key) => map[key];
+    module.exports.id = ${JSON.stringify(modulePathWithHash)}
+    module.exports.resolve = () => { throw new Error('unimplemented') }
     module.exports.keys = () => Object.keys(map)`;
     return await bundler.transformFile(
       modulePath,

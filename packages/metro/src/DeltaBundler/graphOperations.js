@@ -36,9 +36,9 @@ import type {
   GraphInputOptions,
   Module,
   Options,
-  RequireContextParams,
   TransformResultDependency,
 } from './types.flow';
+import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
 
 const path = require('path');
 const crypto = require('crypto');
