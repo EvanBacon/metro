@@ -68,28 +68,14 @@ class Bundler {
   async transformFile(
     filePath: string,
     transformOptions: TransformOptions,
+    /** Optionally provide the file contents, this can be used to provide virtual contents for a file. */
+    fileBuffer?: Buffer,
   ): Promise<TransformResultWithSource<>> {
     // We need to be sure that the DependencyGraph has been initialized.
     // TODO: Remove this ugly hack!
     await this._depGraph.ready();
 
-    return this._transformer.transformFile(filePath, transformOptions);
-  }
-
-  async transformVirtualFile(
-    filePath: string,
-    transformOptions: TransformOptions,
-    fileBuffer: Buffer,
-  ): Promise<TransformResultWithSource<>> {
-    // We need to be sure that the DependencyGraph has been initialized.
-    // TODO: Remove this ugly hack!
-    await this._depGraph.ready();
-
-    return this._transformer.transformFile(
-      filePath,
-      transformOptions,
-      fileBuffer,
-    );
+    return this._transformer.transformFile(filePath, transformOptions, fileBuffer);
   }
 
   // Waits for the bundler to become ready.
