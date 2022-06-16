@@ -21,18 +21,6 @@ export type MixedOutput = {
 
 export type AsyncDependencyType = 'async' | 'prefetch';
 
-// TODO: Convert to a Flow enum
-export type ContextMode = 'sync' | 'eager' | 'lazy' | 'lazy-once';
-
-export type RequireContextParams = $ReadOnly<{
-  /* Should search for files recursively. Optional, default `true` when `require.context` is used */
-  recursive: boolean,
-  /* Filename filter pattern for use in `require.context`. Optional, default `/^\.\/.*$/` (any file) when `require.context` is used */
-  filter: {pattern: string, flags?: string},
-  /** Mode for resolving dynamic dependencies. Defaults to `sync` */
-  mode: ContextMode,
-}>;
-
 export type TransformResultDependency = {
   /**
    * The literal name provided to a require or import call. For example 'foo' in

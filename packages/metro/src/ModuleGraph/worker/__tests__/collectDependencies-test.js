@@ -32,8 +32,7 @@ const nullthrows = require('nullthrows');
 
 const {any, objectContaining} = expect;
 
-const {InvalidRequireCallError, DefaultModuleDependencyRegistry} =
-  collectDependencies;
+const {InvalidRequireCallError} = collectDependencies;
 const opts = {
   asyncRequireModulePath: 'asyncRequire',
   dynamicRequires: 'reject',
