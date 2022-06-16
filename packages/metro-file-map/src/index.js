@@ -60,7 +60,15 @@ import * as path from 'path';
 const nodeCrawl = require('./crawlers/node');
 const watchmanCrawl = require('./crawlers/watchman');
 
-export type {HasteFS, HasteMap, InternalData, ModuleMapData, ModuleMapItem};
+export type {
+  BuildParameters,
+  FileData,
+  HasteFS,
+  HasteMap,
+  InternalData,
+  ModuleMapData,
+  ModuleMapItem,
+};
 
 export type InputOptions = $ReadOnly<{
   computeDependencies?: ?boolean,
@@ -85,6 +93,7 @@ export type InputOptions = $ReadOnly<{
   maxWorkers: number,
   throwOnModuleCollision?: ?boolean,
   useWatchman?: ?boolean,
+  watchmanDeferStates?: $ReadOnlyArray<string>,
   watch?: ?boolean,
   console?: Console,
   cacheManagerFactory?: ?CacheManagerFactory,
@@ -98,6 +107,7 @@ type InternalOptions = {
   throwOnModuleCollision: boolean,
   useWatchman: boolean,
   watch: boolean,
+  watchmanDeferStates: $ReadOnlyArray<string>,
 };
 
 interface Watcher {
@@ -288,6 +298,7 @@ export default class HasteMap extends EventEmitter {
       throwOnModuleCollision: !!options.throwOnModuleCollision,
       useWatchman: options.useWatchman == null ? true : options.useWatchman,
       watch: !!options.watch,
+      watchmanDeferStates: options.watchmanDeferStates ?? [],
     };
 
     this._console = options.console || global.console;
@@ -352,10 +363,15 @@ export default class HasteMap extends EventEmitter {
           data.removedFiles.size > 0
         ) {
           hasteMap = await this._buildHasteMap(data);
-          await this._persist(hasteMap);
         } else {
           hasteMap = data.hasteMap;
         }
+
+        await this._persist(
+          hasteMap,
+          data.changedFiles ?? new Map(),
+          data.removedFiles ?? new Map(),
+        );
 
         const rootDir = this._options.rootDir;
         const hasteFS = new HasteFS({
@@ -732,10 +748,10 @@ export default class HasteMap extends EventEmitter {
   /**
    * 4. serialize the new `HasteMap` in a cache file.
    */
-  async _persist(hasteMap: InternalData) {
+  async _persist(hasteMap: InternalData, changed: FileData, removed: FileData) {
     this._options.perfLogger?.point('persist_start');
     const snapshot = deepCloneInternalData(hasteMap);
-    await this._cacheManager.write(snapshot);
+    await this._cacheManager.write(snapshot, {changed, removed});
     this._options.perfLogger?.point('persist_end');
   }
 
@@ -848,6 +864,7 @@ export default class HasteMap extends EventEmitter {
         dot: true,
         glob: extensions.map(extension => '**/*.' + extension),
         ignored: ignorePattern,
+        watchmanDeferStates: this._options.watchmanDeferStates,
       });
 
       return new Promise((resolve, reject) => {

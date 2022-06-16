@@ -10,6 +10,7 @@
 
 'use strict';
 
+import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
 import type {PrivateState} from './graphOperations';
 import type {JsTransformOptions} from 'metro-transform-worker';
 
@@ -62,6 +63,9 @@ export type TransformResultDependency = {
     +contextParams?: RequireContextParams,
 
     +locs: $ReadOnlyArray<BabelSourceLocation>,
+
+    /** Context for requiring a collection of modules. */
+    +contextParams?: RequireContextParams,
   },
 };
 
