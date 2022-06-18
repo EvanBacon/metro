@@ -16,7 +16,10 @@ import type {
   TransformContextFn,
   TransformInputOptions,
 } from '../DeltaBundler/types.flow';
-import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
+import type {
+  RequireContextParams,
+  ContextMode,
+} from '../ModuleGraph/worker/collectDependencies';
 import type {TransformOptions} from '../DeltaBundler/Worker';
 import type {ConfigT} from 'metro-config/src/configTypes.flow';
 import type {Type} from 'metro-transform-worker';
@@ -117,6 +120,77 @@ function removeInlineRequiresBlockListFromOptions(
   return inlineRequires;
 }
 
+function createFileMap(
+  modulePath: string,
+  files: string[],
+  processModule: (moduleId: string) => string,
+) {
+  let mapString = '';
+
+  files.map(file => {
+    let filePath = path.relative(modulePath, file);
+
+    // Prevent require cycles.
+    if (filePath) {
+      // Ensure we have the starting `./`
+      if (!filePath.startsWith('.')) {
+        filePath = `.${path.sep}` + filePath;
+      }
+      const key = JSON.stringify(filePath);
+      mapString += `${key}: { get() { return ${processModule(file)}; } },`;
+    }
+  });
+  return `Object.defineProperties({}, {${mapString}})`;
+}
+
+function getSyncContextModuleTemplate(
+  modulePath: string,
+  files: string[],
+  id: string,
+): string {
+  // TODO: All source types https://github.com/webpack/webpack/blob/e2f1592f7e4d8f0578e5bb23d6a863b4a2b5f309/lib/ContextModule.js#L741
+  return `
+  // All of the requested modules which are loaded behind getters.
+  const map = ${createFileMap(
+    modulePath,
+    files,
+    moduleId => `require(${JSON.stringify(moduleId)})`,
+  )};
+
+  function metroContext(request) {
+    return map[key];
+  }
+
+  // Return the keys that can be resolved.
+  metroContext.keys = function metroContextKeys() {
+    return Object.keys(map);
+  };
+
+  // Return the module identifier for a user request.
+  metroContext.resolve = function metroContextResolve(request) {
+    throw new Error('Unimplemented Metro module context functionality');
+  }
+  
+  // Readable identifier for the context module.
+  metroContext.id = ${JSON.stringify(id)};
+  
+  module.exports = metroContext;`;
+}
+
+function getContextModuleTemplate(
+  mode: ContextMode,
+  modulePath: string,
+  files: string[],
+  id: string,
+): string {
+  switch (mode) {
+    case 'sync':
+      return getSyncContextModuleTemplate(modulePath, files, id);
+    default:
+      throw new Error(`Metro context mode "${mode}" is unimplemented`);
+  }
+}
+
 /** Generate the default method for transforming a `require.context` module. */
 async function getTransformContextFn(
   entryFiles: $ReadOnlyArray<string>,
@@ -148,31 +222,13 @@ async function getTransformContextFn(
       filter,
     });
 
-    let mapString = '';
-
-    files.map(file => {
-      let filePath = path.relative(modulePath, file);
-
-      // Prevent require cycles.
-      if (filePath) {
-        // Ensure we have the starting `./`
-        if (!filePath.startsWith('.')) {
-          filePath = `.${path.sep}` + filePath;
-        }
-        const key = JSON.stringify(filePath);
-        mapString += `${key}: { get() { return require("${file}") } },`;
-        // mapString += `${key}: require("${file}"),`;
-      }
-    });
-
-    // TODO: All source types https://github.com/webpack/webpack/blob/e2f1592f7e4d8f0578e5bb23d6a863b4a2b5f309/lib/ContextModule.js#L741
-    const template = `
-    const map = Object.defineProperties({}, {${mapString}}) 
-
-    module.exports = (key) => map[key];
-    module.exports.id = ${JSON.stringify(modulePathWithHash)}
-    module.exports.resolve = () => { throw new Error('unimplemented') }
-    module.exports.keys = () => Object.keys(map)`;
+    const template = getContextModuleTemplate(
+      requireContext.mode,
+      modulePath,
+      files,
+      modulePathWithHash,
+    );
+    console.log('template:', files);
     return await bundler.transformFile(
       modulePath,
       {
