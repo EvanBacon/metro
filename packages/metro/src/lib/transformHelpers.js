@@ -137,7 +137,9 @@ function createFileMap(
         filePath = `.${path.sep}` + filePath;
       }
       const key = JSON.stringify(filePath);
-      mapString += `${key}: { get() { return ${processModule(file)}; } },`;
+      mapString += `${key}: { enumerable: true, get() { return ${processModule(
+        file,
+      )}; } },`;
     }
   });
   return `Object.defineProperties({}, {${mapString}})`;

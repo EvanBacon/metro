@@ -19,7 +19,7 @@ const {
   traverseDependencies,
 } = require('./graphOperations');
 const {EventEmitter} = require('events');
-
+const path = require('path');
 /**
  * This class is in charge of calculating the delta of changed modules that
  * happen between calls. To do so, it subscribes to file changes, so it can
@@ -32,6 +32,7 @@ class DeltaCalculator<T> extends EventEmitter {
 
   _currentBuildPromise: ?Promise<DeltaResult<T>>;
   _deletedFiles: Set<string> = new Set();
+  _addedFiles: Set<string> = new Set();
   _modifiedFiles: Set<string> = new Set();
 
   _graph: Graph<T>;
@@ -72,6 +73,7 @@ class DeltaCalculator<T> extends EventEmitter {
     });
     this._modifiedFiles = new Set();
     this._deletedFiles = new Set();
+    this._addedFiles = new Set();
   }
 
   /**
@@ -99,6 +101,8 @@ class DeltaCalculator<T> extends EventEmitter {
     this._modifiedFiles = new Set();
     const deletedFiles = this._deletedFiles;
     this._deletedFiles = new Set();
+    const addedFiles = this._addedFiles;
+    this._addedFiles = new Set();
 
     // Concurrent requests should reuse the same bundling process. To do so,
     // this method stores the promise as an instance variable, and then it's
@@ -106,6 +110,7 @@ class DeltaCalculator<T> extends EventEmitter {
     this._currentBuildPromise = this._getChangedDependencies(
       modifiedFiles,
       deletedFiles,
+      addedFiles,
     );
 
     let result;
@@ -121,6 +126,7 @@ class DeltaCalculator<T> extends EventEmitter {
       // which is not correct.
       modifiedFiles.forEach((file: string) => this._modifiedFiles.add(file));
       deletedFiles.forEach((file: string) => this._deletedFiles.add(file));
+      addedFiles.forEach((file: string) => this._addedFiles.add(file));
 
       // If after an error the number of modules has changed, we could be in
       // a weird state. As a safe net we clean the dependency modules to force
@@ -180,7 +186,11 @@ class DeltaCalculator<T> extends EventEmitter {
       this._modifiedFiles.delete(filePath);
     } else {
       this._deletedFiles.delete(filePath);
-      this._modifiedFiles.add(filePath);
+      if (type === 'add') {
+        this._addedFiles.add(filePath);
+      } else {
+        this._modifiedFiles.add(filePath);
+      }
     }
 
     // Notify users that there is a change in some of the bundle files. This
@@ -191,6 +201,7 @@ class DeltaCalculator<T> extends EventEmitter {
   async _getChangedDependencies(
     modifiedFiles: Set<string>,
     deletedFiles: Set<string>,
+    addedFiles: Set<string>,
   ): Promise<DeltaResult<T>> {
     if (!this._graph.dependencies.size) {
       const {added} = await initialTraverseDependencies(
@@ -227,6 +238,34 @@ class DeltaCalculator<T> extends EventEmitter {
       (filePath: string) => this._graph.dependencies.has(filePath),
     );
 
+    // Check if any added or removed files are matched in a context module.
+    Array.from(addedFiles)
+      .concat(Array.from(deletedFiles))
+      .forEach((filePath: string) => {
+        this._graph.dependencies.forEach(value => {
+          if (
+            value.contextParams
+            //  &&
+            // !modifiedDependencies.includes(value.path)
+          ) {
+            console.log('test fs change:', filePath, value.path);
+
+            if (
+              fileMatchesContext(filePath, value.path, {
+                recursive: value.contextParams.recursive,
+                filter: new RegExp(
+                  value.contextParams.filter.pattern,
+                  value.contextParams.filter.flags,
+                ),
+              })
+            ) {
+              modifiedDependencies.push(value.path);
+            }
+          }
+          return false;
+        });
+      });
+
     // No changes happened. Return empty delta.
     if (modifiedDependencies.length === 0) {
       return {
@@ -253,3 +292,31 @@ class DeltaCalculator<T> extends EventEmitter {
 }
 
 module.exports = DeltaCalculator;
+
+function fileMatchesContext(
+  testPath: string,
+  inputPath: string,
+  context: $ReadOnly<{
+    /* Should search for files recursively. */
+    recursive: boolean,
+    /* Filter relative paths against a pattern. */
+    filter: RegExp,
+  }>,
+) {
+  const filePath = path.relative(inputPath, testPath);
+
+  // Ignore everything outside of the provided `root`.
+  if (filePath.startsWith('..')) {
+    return false;
+  }
+
+  // Prevent searching in child directories during a non-recursive search.
+  if (!context.recursive && filePath.includes(path.sep)) {
+    return false;
+  }
+
+  if (context.filter.test(filePath)) {
+    return true;
+  }
+  return false;
+}

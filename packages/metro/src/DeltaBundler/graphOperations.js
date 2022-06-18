@@ -400,6 +400,10 @@ async function addDependency<T>(
         delta.earlyInverseDependencies.set(path, new CountingSet());
 
         options.onDependencyAdd();
+        const resolvedContextParams =
+          dependency.data.data.contextParams ||
+          (graph.dependencies.get(path) || {}).contextParams;
+
         module = await processModule(
           path,
           graph,
@@ -476,7 +480,6 @@ function resolveDependencies<T>(
     // `require.context`
     if (dep.data.contextParams) {
       const absolutePath = path.join(parentPath, '..', dep.name);
-      console.log('context dep', dep.data.key, absolutePath);
       resolvedDep = {
         // TODO: Verify directory exists
         absolutePath: absolutePath,
