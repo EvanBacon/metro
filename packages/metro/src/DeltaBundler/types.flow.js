@@ -14,6 +14,8 @@ import type {RequireContextParams} from '../ModuleGraph/worker/collectDependenci
 import type {PrivateState} from './graphOperations';
 import type {JsTransformOptions} from 'metro-transform-worker';
 
+import CountingSet from '../lib/CountingSet';
+
 export type MixedOutput = {
   +data: mixed,
   +type: string,
@@ -29,10 +31,13 @@ export type TransformResultDependency = {
   +name: string,
 
   /**
-   * Extra data returned by the dependency extractor. Whatever is added here is
-   * blindly piped by Metro to the serializers.
+   * Extra data returned by the dependency extractor.
    */
   +data: {
+    /**
+     * A locally unique key for this dependency within the current module.
+     */
+    +key: string,
     /**
      * If not null, this dependency is due to a dynamic `import()` or `__prefetchImport()` call.
      */
@@ -65,7 +70,7 @@ export type Dependency = {
 export type Module<T = MixedOutput> = {
   +contextParams?: RequireContextParams,
   +dependencies: Map<string, Dependency>,
-  +inverseDependencies: Set<string>,
+  +inverseDependencies: CountingSet<string>,
   +output: $ReadOnlyArray<T>,
   +path: string,
   +getSource: () => Buffer,
@@ -123,7 +128,11 @@ export type AllowOptionalDependencies =
   | AllowOptionalDependenciesWithOptions;
 
 export type Options<T = MixedOutput> = {
-  +resolve: (from: string, to: string) => string,
+  +resolve: (
+    from: string,
+    to: string,
+    context?: ?RequireContextParams,
+  ) => string,
   +transform: TransformFn<T>,
   /** Given a path and require context, return a virtual context module. */
   +transformContext: TransformContextFn<T>,

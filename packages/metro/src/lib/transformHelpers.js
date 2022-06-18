@@ -191,6 +191,17 @@ function getContextModuleTemplate(
   }
 }
 
+function getContextModuleId(modulePath, context: RequireContextParams) {
+  return [
+    modulePath,
+    context.mode,
+    context.recursive ? 'recursive' : '',
+    new RegExp(context.filter.pattern, context.filter.flags).toString(),
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
 /** Generate the default method for transforming a `require.context` module. */
 async function getTransformContextFn(
   entryFiles: $ReadOnlyArray<string>,
@@ -207,11 +218,7 @@ async function getTransformContextFn(
     options,
   );
 
-  return async (
-    modulePathWithHash: string,
-    requireContext: RequireContextParams,
-  ) => {
-    const [modulePath] = modulePathWithHash.split('$$_context_$$');
+  return async (modulePath: string, requireContext: RequireContextParams) => {
     const graph = await bundler.getDependencyGraph();
     const filter = new RegExp(
       requireContext.filter.pattern,
@@ -226,9 +233,8 @@ async function getTransformContextFn(
       requireContext.mode,
       modulePath,
       files,
-      modulePathWithHash,
+      getContextModuleId(modulePath, requireContext),
     );
-    console.log('template:', files);
     return await bundler.transformFile(
       modulePath,
       {

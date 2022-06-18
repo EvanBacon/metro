@@ -152,6 +152,9 @@ class Transformer {
     return {
       ...data.result,
       getSource(): Buffer {
+        if (fileBuffer) {
+          return fileBuffer;
+        }
         return fs.readFileSync(filePath);
       },
     };

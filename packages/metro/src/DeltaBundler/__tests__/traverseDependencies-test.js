@@ -11,6 +11,7 @@
 
 import type {Graph, TransformResultDependency} from '../types.flow';
 
+import CountingSet from '../../lib/CountingSet';
 import nullthrows from 'nullthrows';
 
 const {
@@ -19,6 +20,8 @@ const {
   reorderGraph,
   traverseDependencies: traverseDependenciesImpl,
 } = require('../graphOperations');
+
+const {objectContaining} = expect;
 
 type DependencyDataInput = $Shape<TransformResultDependency['data']>;
 
@@ -29,7 +32,7 @@ let mockedDependencyTree: Map<
     $ReadOnly<{
       name: string,
       path: string,
-      data?: DependencyDataInput,
+      data: DependencyDataInput,
     }>,
   >,
 > = new Map();
@@ -78,11 +81,22 @@ const Actions = {
     data?: DependencyDataInput,
   ) {
     const deps = nullthrows(mockedDependencyTree.get(path));
+    const depName = name ?? dependencyPath.replace('/', '');
+    const key = require('crypto')
+      .createHash('sha1')
+      .update(depName)
+      .digest('base64');
     const dep = {
-      name: name ?? dependencyPath.replace('/', ''),
+      name: depName,
       path: dependencyPath,
-      data: data ?? {},
+      data: {key, ...(data ?? {})},
     };
+    if (
+      deps.findIndex(existingDep => existingDep.data.key === dep.data.key) !==
+      -1
+    ) {
+      throw new Error('Found existing mock dep with key: ' + dep.data.key);
+    }
     if (position == null) {
       deps.push(dep);
     } else {
@@ -202,7 +216,7 @@ async function traverseDependencies(paths, graph, options) {
   );
   const actualInverseDependencies = new Map();
   for (const [path, module] of graph.dependencies) {
-    actualInverseDependencies.set(path, module.inverseDependencies);
+    actualInverseDependencies.set(path, new Set(module.inverseDependencies));
   }
   expect(actualInverseDependencies).toEqual(expectedInverseDependencies);
 
@@ -220,6 +234,7 @@ beforeEach(async () => {
         data: {
           asyncType: null,
           locs: [],
+          key: dep.data.key,
           ...dep.data,
         },
       })),
@@ -314,7 +329,7 @@ it('should populate all the inverse dependencies', async () => {
 
   expect(
     nullthrows(graph.dependencies.get('/bar')).inverseDependencies,
-  ).toEqual(new Set(['/foo', '/bundle']));
+  ).toEqual(new CountingSet(['/foo', '/bundle']));
 });
 
 it('should return an empty result when there are no changes', async () => {
@@ -501,7 +516,7 @@ describe('edge cases', () => {
 
     expect(
       nullthrows(graph.dependencies.get('/foo')).inverseDependencies,
-    ).toEqual(new Set(['/bundle', '/baz']));
+    ).toEqual(new CountingSet(['/baz', '/bundle']));
   });
 
   it('should handle renames correctly', async () => {
@@ -786,24 +801,33 @@ describe('edge cases', () => {
       ...nullthrows(graph.dependencies.get(moduleFoo)).dependencies,
     ]).toEqual([
       [
-        'qux',
+        expect.any(String),
         {
           absolutePath: '/qux',
-          data: {data: {asyncType: null, locs: []}, name: 'qux'},
+          data: {
+            data: objectContaining({asyncType: null, locs: []}),
+            name: 'qux',
+          },
         },
       ],
       [
-        'bar',
+        expect.any(String),
         {
           absolutePath: '/bar',
-          data: {data: {asyncType: null, locs: []}, name: 'bar'},
+          data: {
+            data: objectContaining({asyncType: null, locs: []}),
+            name: 'bar',
+          },
         },
       ],
       [
-        'baz',
+        expect.any(String),
         {
           absolutePath: '/baz',
-          data: {data: {asyncType: null, locs: []}, name: 'baz'},
+          data: {
+            data: objectContaining({asyncType: null, locs: []}),
+            name: 'baz',
+          },
         },
       ],
     ]);
@@ -1900,21 +1924,21 @@ describe('edge cases', () => {
       ...nullthrows(graph.dependencies.get(entryModule)).dependencies,
     ]).toEqual([
       [
-        'foo.js',
+        expect.any(String),
         {
           absolutePath: '/foo',
           data: {
-            data: {asyncType: null, locs: []},
+            data: objectContaining({asyncType: null, locs: []}),
             name: 'foo.js',
           },
         },
       ],
       [
-        'foo',
+        expect.any(String),
         {
           absolutePath: '/foo',
           data: {
-            data: {asyncType: null, locs: []},
+            data: objectContaining({asyncType: null, locs: []}),
             name: 'foo',
           },
         },
@@ -2006,12 +2030,12 @@ describe('edge cases', () => {
       [
         entryModule,
         [
-          {name: 'foo', path: moduleFoo},
-          {name: 'bar', path: moduleBar},
+          {name: 'foo', path: moduleFoo, data: {key: 'foo'}},
+          {name: 'bar', path: moduleBar, data: {key: 'bar'}},
         ],
       ],
-      [moduleFoo, [{name: 'baz', path: moduleBaz}]],
-      [moduleBar, [{name: 'baz', path: moduleBaz}]],
+      [moduleFoo, [{name: 'baz', path: moduleBaz, data: {key: 'baz'}}]],
+      [moduleBar, [{name: 'baz', path: moduleBaz, data: {key: 'baz'}}]],
     ]);
 
     // Test that even when having different modules taking longer, the order
@@ -2038,6 +2062,7 @@ describe('reorderGraph', () => {
         data: {
           asyncType: null,
           locs: [],
+          key: path.substr(1),
         },
         name: path.substr(1),
       },
@@ -2049,7 +2074,7 @@ describe('reorderGraph', () => {
       getSource: () => Buffer.from('// source'),
       // NOTE: inverseDependencies is traversal state/output, not input, so we
       // don't pre-populate it.
-      inverseDependencies: new Set(),
+      inverseDependencies: new CountingSet(),
     });
 
     const graph = createGraph({
@@ -2166,5 +2191,85 @@ describe('optional dependencies', () => {
     await expect(
       initialTraverseDependencies(localGraph, localOptions),
     ).rejects.toThrow();
+  });
+});
+
+describe('parallel edges', () => {
+  it('add twice w/ same name, build and remove once', async () => {
+    // Create a second edge between /foo and /bar.
+    Actions.addDependency('/foo', '/bar', undefined, undefined, {
+      key: 'bar-second-key',
+    });
+
+    await initialTraverseDependencies(graph, options);
+
+    // Remove one of the edges between /foo and /bar (arbitrarily)
+    Actions.removeDependency('/foo', '/bar');
+
+    expect(
+      getPaths(await traverseDependencies([...files], graph, options)),
+    ).toEqual({
+      added: new Set(),
+      modified: new Set(['/foo']),
+      deleted: new Set(),
+    });
+  });
+
+  it('add twice w/ same name, build and remove twice', async () => {
+    // Create a second edge between /foo and /bar.
+    Actions.addDependency('/foo', '/bar', undefined, undefined, {
+      key: 'bar-second-key',
+    });
+
+    await initialTraverseDependencies(graph, options);
+
+    // Remove both edges between /foo and /bar
+    Actions.removeDependency('/foo', '/bar');
+    Actions.removeDependency('/foo', '/bar');
+
+    expect(
+      getPaths(await traverseDependencies([...files], graph, options)),
+    ).toEqual({
+      added: new Set(),
+      modified: new Set(['/foo']),
+      deleted: new Set(['/bar']),
+    });
+  });
+
+  it('add twice w/ different names, build and remove once', async () => {
+    // Create a second edge between /foo and /bar, with a different `name`.
+    Actions.addDependency('/foo', '/bar', undefined, 'bar-second');
+
+    await initialTraverseDependencies(graph, options);
+
+    // Remove one of the edges between /foo and /bar (arbitrarily)
+    Actions.removeDependency('/foo', '/bar');
+
+    expect(
+      getPaths(await traverseDependencies([...files], graph, options)),
+    ).toEqual({
+      added: new Set(),
+      modified: new Set(['/foo']),
+      deleted: new Set(),
+    });
+  });
+
+  it('add twice w/ different names, build and remove twice', async () => {
+    // Create a second edge between /foo and /bar, with a different `name`.
+    Actions.addDependency('/foo', '/bar', undefined, 'bar-second');
+
+    await initialTraverseDependencies(graph, options);
+
+    // Remove both edges between /foo and /bar
+    Actions.removeDependency('/foo', '/bar');
+    Actions.removeDependency('/foo', '/bar');
+
+    expect(
+      getPaths(await traverseDependencies([...files], graph, options)),
+    ).toEqual({
+      added: new Set(),
+      modified: new Set(['/foo']),
+      deleted: new Set(['/bar']),
+    });
   });
 });

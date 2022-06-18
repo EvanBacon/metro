@@ -42,6 +42,8 @@ import type {RequireContextParams} from '../ModuleGraph/worker/collectDependenci
 
 const path = require('path');
 const crypto = require('crypto');
+import CountingSet from '../lib/CountingSet';
+
 const invariant = require('invariant');
 const nullthrows = require('nullthrows');
 
@@ -107,7 +109,7 @@ type Delta = $ReadOnly<{
 
   // A place to temporarily track inverse dependencies for a module while it is
   // being processed but has not been added to `graph.dependencies` yet.
-  earlyInverseDependencies: Map<string, Set<string>>,
+  earlyInverseDependencies: Map<string, CountingSet<string>>,
 }>;
 
 type InternalOptions<T> = $ReadOnly<{
@@ -288,7 +290,8 @@ async function processModule<T>(
   );
 
   const previousModule = graph.dependencies.get(path) || {
-    inverseDependencies: delta.earlyInverseDependencies.get(path) || new Set(),
+    inverseDependencies:
+      delta.earlyInverseDependencies.get(path) || new CountingSet(),
     path,
   };
   const previousDependencies = previousModule.dependencies || new Map();
@@ -304,8 +307,8 @@ async function processModule<T>(
   graph.dependencies.set(module.path, module);
 
   // Diff dependencies (1/2): remove dependencies that have changed or been removed.
-  for (const [relativePath, prevDependency] of previousDependencies) {
-    const curDependency = currentDependencies.get(relativePath);
+  for (const [key, prevDependency] of previousDependencies) {
+    const curDependency = currentDependencies.get(key);
     if (
       !curDependency ||
       curDependency.absolutePath !== prevDependency.absolutePath ||
@@ -313,21 +316,14 @@ async function processModule<T>(
         curDependency.data.data.asyncType !==
           prevDependency.data.data.asyncType)
     ) {
-      removeDependency(
-        module,
-        relativePath,
-        prevDependency,
-        graph,
-        delta,
-        options,
-      );
+      removeDependency(module, key, prevDependency, graph, delta, options);
     }
   }
 
   // Diff dependencies (2/2): add dependencies that have changed or been added.
   const promises = [];
-  for (const [relativePath, curDependency] of currentDependencies) {
-    const prevDependency = previousDependencies.get(relativePath);
+  for (const [key, curDependency] of currentDependencies) {
+    const prevDependency = previousDependencies.get(key);
     if (
       !prevDependency ||
       prevDependency.absolutePath !== curDependency.absolutePath ||
@@ -336,14 +332,7 @@ async function processModule<T>(
           curDependency.data.data.asyncType)
     ) {
       promises.push(
-        addDependency(
-          module,
-          relativePath,
-          curDependency,
-          graph,
-          delta,
-          options,
-        ),
+        addDependency(module, key, curDependency, graph, delta, options),
       );
     }
   }
@@ -370,7 +359,7 @@ async function processModule<T>(
 
 async function addDependency<T>(
   parentModule: Module<T>,
-  relativePath: string,
+  key: string,
   dependency: Dependency,
   graph: Graph<T>,
   delta: Delta,
@@ -409,7 +398,7 @@ async function addDependency<T>(
           delta.added.add(path);
           delta.modified.delete(path);
         }
-        delta.earlyInverseDependencies.set(path, new Set([parentModule.path]));
+        delta.earlyInverseDependencies.set(path, new CountingSet());
 
         options.onDependencyAdd();
         module = await processModule(
@@ -435,18 +424,18 @@ async function addDependency<T>(
   // This means the parent's dependencies can get desynced from
   // inverseDependencies and the other fields in the case of lazy edges.
   // Not an optimal representation :(
-  parentModule.dependencies.set(relativePath, dependency);
+  parentModule.dependencies.set(key, dependency);
 }
 
 function removeDependency<T>(
   parentModule: Module<T>,
-  relativePath: string,
+  key: string,
   dependency: Dependency,
   graph: Graph<T>,
   delta: Delta,
   options: InternalOptions<T>,
 ): void {
-  parentModule.dependencies.delete(relativePath);
+  parentModule.dependencies.delete(key);
 
   const {absolutePath} = dependency;
 
@@ -485,54 +474,58 @@ function resolveDependencies<T>(
   dependencies: $ReadOnlyArray<TransformResultDependency>,
   options: InternalOptions<T>,
 ): Map<string, Dependency> {
-  const resolve = (parentPath: string, result: TransformResultDependency) => {
-    const relativePath = result.name;
+  const maybeResolvedDeps = new Map();
 
+  for (const dep of dependencies) {
+    let resolvedDep;
     // `require.context`
-    if (result.data.contextParams) {
-      const hash = getContextHash(result.data.contextParams);
-      const absolutePath =
-        // path.join(parentPath, '..', relativePath);
-        path.join(parentPath, '..', relativePath) + '$$_context_$$' + hash;
-      return [
-        hash,
-        {
-          absolutePath,
-          data: result,
-          contextParams: result.data.contextParams,
-        },
-      ];
-    }
-
-    try {
-      return [
-        relativePath,
-        {
-          absolutePath: options.resolve(parentPath, relativePath),
-          data: result,
-        },
-      ];
-    } catch (error) {
-      // Ignore unavailable optional dependencies. They are guarded
-      // with a try-catch block and will be handled during runtime.
-      if (result.data.isOptional !== true) {
-        throw error;
+    if (dep.data.contextParams) {
+      // const hash = getContextHash(dep.data.contextParams);
+      const absolutePath = path.join(parentPath, '..', dep.name);
+      console.log('context dep', dep.data.key, absolutePath);
+      resolvedDep = {
+        // TODO: Verify directory exists
+        absolutePath: absolutePath,
+        // absolutePath: options.resolve(parentPath, dep.name),
+        data: dep,
+      };
+    } else {
+      try {
+        resolvedDep = {
+          absolutePath: options.resolve(parentPath, dep.name),
+          data: dep,
+        };
+      } catch (error) {
+        // Ignore unavailable optional dependencies. They are guarded
+        // with a try-catch block and will be handled during runtime.
+        if (dep.data.isOptional !== true) {
+          throw error;
+        }
       }
     }
-    return undefined;
-  };
 
-  const resolved = dependencies.reduce(
-    (list: Array<[string, Dependency]>, result: TransformResultDependency) => {
-      const resolvedPath = resolve(parentPath, result);
-      if (resolvedPath) {
-        list.push(resolvedPath);
-      }
-      return list;
-    },
-    [],
-  );
-  return new Map(resolved);
+    const key = dep.data.key;
+    if (maybeResolvedDeps.has(key)) {
+      throw new Error(
+        `resolveDependencies: Found duplicate dependency key '${key}' in ${parentPath}`,
+      );
+    }
+    maybeResolvedDeps.set(key, resolvedDep);
+  }
+
+  const resolvedDeps = new Map();
+  // Return just the dependencies we successfully resolved.
+  // FIXME: This has a bad bug affecting all dependencies *after* an unresolved
+  // optional dependency. We'll need to propagate the nulls all the way to the
+  // serializer and the require() runtime to keep the dependency map from being
+  // desynced from the contents of the module.
+  for (const [key, resolvedDep] of maybeResolvedDeps) {
+    if (resolvedDep) {
+      resolvedDeps.set(key, resolvedDep);
+    }
+  }
+
+  return resolvedDeps;
 }
 
 /**
@@ -640,8 +633,8 @@ function releaseModule<T>(
   delta: Delta,
   options: InternalOptions<T>,
 ) {
-  for (const [relativePath, dependency] of module.dependencies) {
-    removeDependency(module, relativePath, dependency, graph, delta, options);
+  for (const [key, dependency] of module.dependencies) {
+    removeDependency(module, key, dependency, graph, delta, options);
   }
   graph.privateState.gc.color.set(module.path, 'black');
   if (!graph.privateState.gc.possibleCycleRoots.has(module.path)) {
