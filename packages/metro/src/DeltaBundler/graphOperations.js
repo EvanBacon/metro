@@ -41,7 +41,6 @@ import type {
 import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
 
 const path = require('path');
-const crypto = require('crypto');
 import CountingSet from '../lib/CountingSet';
 
 const invariant = require('invariant');
@@ -150,7 +149,7 @@ function getInternalOptions<T>({
  * dependency graph.
  * Instead of traversing the whole graph each time, it just calculates the
  * difference between runs by only traversing the added/removed dependencies.
- * To do so, it uses the passed passed graph dependencies and it mutates it.
+ * To do so, it uses the passed graph dependencies and it mutates it.
  * The paths parameter contains the absolute paths of the root files that the
  * method should traverse. Normally, these paths should be the modified files
  * since the last traversal.
@@ -465,10 +464,6 @@ function removeDependency<T>(
   }
 }
 
-function getContextHash(ctx: RequireContextParams): string {
-  return crypto.createHash('sha1').update(JSON.stringify(ctx)).digest('hex');
-}
-
 function resolveDependencies<T>(
   parentPath: string,
   dependencies: $ReadOnlyArray<TransformResultDependency>,
@@ -480,7 +475,6 @@ function resolveDependencies<T>(
     let resolvedDep;
     // `require.context`
     if (dep.data.contextParams) {
-      // const hash = getContextHash(dep.data.contextParams);
       const absolutePath = path.join(parentPath, '..', dep.name);
       console.log('context dep', dep.data.key, absolutePath);
       resolvedDep = {
