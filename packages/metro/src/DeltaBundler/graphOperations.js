@@ -168,6 +168,7 @@ async function traverseDependencies<T>(
 
   const internalOptions = getInternalOptions(options);
 
+  console.log('traverseDependencies:', paths);
   for (const path of paths) {
     // Start traversing from modules that are already part of the dependency graph.
     if (graph.dependencies.get(path)) {
@@ -274,6 +275,7 @@ async function processModule<T>(
 ): Promise<Module<T>> {
   const resolvedContextParams =
     contextParams || (graph.dependencies.get(path) || {}).contextParams;
+  console.log('processModule:', path, resolvedContextParams);
   // Transform the file via the given option.
   // TODO: Unbind the transform method from options
   const result = await (resolvedContextParams
@@ -298,7 +300,7 @@ async function processModule<T>(
   // Update the module information.
   const module = {
     ...previousModule,
-    contextParams,
+    contextParams: resolvedContextParams,
     dependencies: new Map(previousDependencies),
     getSource: result.getSource,
     output: result.output,
@@ -352,6 +354,7 @@ async function processModule<T>(
 
   // $FlowFixMe[cannot-write]
   module.dependencies = currentDependencies;
+  console.log('processModule.end:', path, module);
 
   return module;
 }
@@ -371,6 +374,12 @@ async function addDependency<T>(
   let module = graph.dependencies.get(path);
 
   if (options.shallow) {
+    console.log(
+      'addDependency.shallow:',
+      module,
+      dependency.data.data.contextParams,
+    );
+
     // Don't add a node for the module if the graph is shallow (single-module).
   } else if (
     options.experimentalImportBundleSupport &&
