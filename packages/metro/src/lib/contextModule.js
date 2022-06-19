@@ -10,7 +10,6 @@ export function getContextModuleId(modulePath: string, context: RequireContextPa
     return [
       modulePath,
       context.mode,
-      // TODO: nonrecursive ??
       context.recursive ? 'recursive' : '',
       new RegExp(context.filter.pattern, context.filter.flags).toString(),
     ]
@@ -22,16 +21,18 @@ function toHash(value: string): string {
     return crypto.createHash('sha1').update(value).digest('hex');
 }
 
+/** Given a virtualized path, strip the virtual component and return a path that could be real. */
 export function removeContextQueryParam(virtualFilePath: string): string {
     const [filepath] = virtualFilePath.split('?ctx=');
     return filepath;
 }
 
+/** Given a path and a require context, return a virtual file path that ensures uniqueness between paths with different contexts. */
 export function appendContextQueryParam(filePath: string, context: RequireContextParams): string {
     return filePath + '?ctx=' + toHash(getContextModuleId(filePath, context));
 }
 
-
+/** Match a file against a require context. */
 export function fileMatchesContext(
     inputPath: string,
     testPath: string,
@@ -44,7 +45,7 @@ export function fileMatchesContext(
 ) {
     // NOTE(EvanBacon): Ensure this logic is synchronized with the similar 
     // functionality in `metro-file-map/src/HasteFS.js` (`matchFilesWithContext()`)
-  
+
     const filePath = path.relative(inputPath, testPath);
   
     console.log('test file:', testPath, '->', inputPath);
@@ -58,6 +59,7 @@ export function fileMatchesContext(
       !context.filter.test(
         // NOTE(EvanBacon): Ensure files start with `./` for matching purposes
         // this ensures packages work across Metro and Webpack (ex: Storybook for React DOM / React Native).
+        // `a/b.js` -> `./a/b.js`
         '.' + path.sep + filePath,
       )
     ) {
