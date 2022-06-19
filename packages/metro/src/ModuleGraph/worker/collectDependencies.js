@@ -813,7 +813,7 @@ function collapseDependencies<TSplitCondition>(
 ): InternalDependency<TSplitCondition> {
   let collapsed = dependency;
 
-  // A previously optionally required dependency was required non-optionaly.
+  // A previously optionally required dependency was required non-optionally.
   // Mark it non optional for the whole module
   if (collapsed.isOptional && !qualifier.optional) {
     collapsed = {
