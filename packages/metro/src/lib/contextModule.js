@@ -1,5 +1,5 @@
 import crypto from 'crypto';
-
+import path from 'path';
 import type {
   RequireContextParams,
 } from '../ModuleGraph/worker/collectDependencies';
@@ -10,6 +10,7 @@ export function getContextModuleId(modulePath: string, context: RequireContextPa
     return [
       modulePath,
       context.mode,
+      // TODO: nonrecursive ??
       context.recursive ? 'recursive' : '',
       new RegExp(context.filter.pattern, context.filter.flags).toString(),
     ]
@@ -30,6 +31,7 @@ export function appendContextQueryParam(filePath: string, context: RequireContex
     return filePath + '?ctx=' + toHash(getContextModuleId(filePath, context));
 }
 
+
 export function fileMatchesContext(
     inputPath: string,
     testPath: string,
@@ -40,6 +42,8 @@ export function fileMatchesContext(
       filter: RegExp,
     }>,
 ) {
+    // NOTE(EvanBacon): Ensure this logic is synchronized with the similar 
+    // functionality in `metro-file-map/src/HasteFS.js` (`matchFilesWithContext()`)
   
     const filePath = path.relative(inputPath, testPath);
   
@@ -51,7 +55,11 @@ export function fileMatchesContext(
       // Prevent searching in child directories during a non-recursive search.
       (!context.recursive && filePath.includes(path.sep)) ||
       // Test against the filter.
-      !context.filter.test(filePath)
+      !context.filter.test(
+        // NOTE(EvanBacon): Ensure files start with `./` for matching purposes
+        // this ensures packages work across Metro and Webpack (ex: Storybook for React DOM / React Native).
+        '.' + path.sep + filePath,
+      )
     ) {
       return false;
     }

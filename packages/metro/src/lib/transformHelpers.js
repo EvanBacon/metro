@@ -132,19 +132,41 @@ function createFileMap(
   files.map(file => {
     let filePath = path.relative(modulePath, file);
 
-    // Prevent require cycles.
-    if (filePath) {
-      // Ensure we have the starting `./`
-      if (!filePath.startsWith('.')) {
-        filePath = `.${path.sep}` + filePath;
-      }
-      const key = JSON.stringify(filePath);
-      mapString += `${key}: { enumerable: true, get() { return ${processModule(
-        file,
-      )}; } },`;
+    // NOTE(EvanBacon): I'd prefer we prevent the ability for a module to require itself (`require.context('./')`)
+    // but Webpack allows this, keeping it here provides better parity between bundlers.
+
+    // Ensure we have the starting `./`
+    if (!filePath.startsWith('.')) {
+      filePath = `.${path.sep}` + filePath;
     }
+    const key = JSON.stringify(filePath);
+    mapString += `${key}: { enumerable: true, get() { return ${processModule(
+      file,
+    )}; } },`;
   });
   return `Object.defineProperties({}, {${mapString}})`;
+}
+
+function getEmptyContextModuleTemplate(modulePath: string, id: string): string {
+  return `
+  function metroEmptyContext(request) {
+    let e = new Error("Cannot find module '" + request + "'");
+	  e.code = 'MODULE_NOT_FOUND';
+	  throw e;
+  }
+
+  // Return the keys that can be resolved.
+  metroEmptyContext.keys = () => ([]);
+
+  // Return the module identifier for a user request.
+  metroEmptyContext.resolve = function metroContextResolve(request) {
+    throw new Error('Unimplemented Metro module context functionality');
+  }
+  
+  // Readable identifier for the context module.
+  metroEmptyContext.id = ${JSON.stringify(id)};
+  
+  module.exports = metroEmptyContext;`;
 }
 
 function getSyncContextModuleTemplate(
@@ -187,6 +209,9 @@ function getContextModuleTemplate(
   files: string[],
   id: string,
 ): string {
+  if (!files.length) {
+    return getEmptyContextModuleTemplate(modulePath, id);
+  }
   switch (mode) {
     case 'sync':
       return getSyncContextModuleTemplate(modulePath, files, id);

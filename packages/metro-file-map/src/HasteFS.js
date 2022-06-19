@@ -13,6 +13,8 @@ import {sep} from 'path';
 import type {FileData, Path} from './flow-types';
 import H from './constants';
 import * as fastPath from './lib/fast_path';
+import * as path from 'path';
+
 // $FlowFixMe[untyped-import] - jest-util
 import {globsToMatcher, replacePathSepForGlob} from 'jest-util';
 
@@ -99,8 +101,10 @@ export default class HasteFS {
     for (const file of this.getAbsoluteFileIterator()) {
       const filePath = fastPath.relative(root, file);
 
+      const isRelative =
+        filePath && !filePath.startsWith('..') && !path.isAbsolute(filePath);
       // Ignore everything outside of the provided `root`.
-      if (filePath.startsWith('..')) {
+      if (!isRelative) {
         continue;
       }
 
@@ -109,7 +113,14 @@ export default class HasteFS {
         continue;
       }
 
-      if (context.filter.test(filePath)) {
+      if (
+        context.filter.test(
+          // NOTE(EvanBacon): Ensure files start with `./` for matching purposes
+          // this ensures packages work across Metro and Webpack (ex: Storybook for React DOM / React Native).
+          // `a/b.js` -> `./a/b.js`
+          '.' + path.sep + filePath,
+        )
+      ) {
         files.push(file);
       }
     }
