@@ -157,7 +157,7 @@ function createFileMap(
 function getEmptyContextModuleTemplate(modulePath: string, id: string): string {
   return `
 function metroEmptyContext(request) {
-  let e = new Error("Cannot find module '" + request + "'");
+  let e = new Error("No modules for context '" + ${JSON.stringify(id)} + "'");
   e.code = 'MODULE_NOT_FOUND';
   throw e;
 }
