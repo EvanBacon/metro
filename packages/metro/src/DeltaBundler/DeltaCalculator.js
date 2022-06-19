@@ -12,6 +12,11 @@
 
 import type {DeltaResult, Graph, Options} from './types.flow';
 
+import {
+  removeContextQueryParam,
+  fileMatchesContext,
+} from '../lib/contextModule';
+
 const {
   createGraph,
   initialTraverseDependencies,
@@ -216,6 +221,10 @@ class DeltaCalculator<T> extends EventEmitter {
         reset: true,
       };
     }
+    console.log('getting changed deps');
+    console.log('- files.added:', addedFiles);
+    console.log('- files.modified:', modifiedFiles);
+    console.log('- files.deleted:', deletedFiles);
 
     // If a file has been deleted, we want to invalidate any other file that
     // depends on it, so we can process it and correctly return an error.
@@ -244,23 +253,23 @@ class DeltaCalculator<T> extends EventEmitter {
       .forEach((filePath: string) => {
         this._graph.dependencies.forEach(value => {
           if (
-            value.contextParams
-            //  &&
-            // !modifiedDependencies.includes(value.path)
+            value.contextParams &&
+            !modifiedDependencies.includes(value.path) &&
+            fileMatchesContext(removeContextQueryParam(value.path), filePath, {
+              recursive: value.contextParams.recursive,
+              filter: new RegExp(
+                value.contextParams.filter.pattern,
+                value.contextParams.filter.flags,
+              ),
+            })
           ) {
-            console.log('test fs change:', filePath, value.path);
-
-            if (
-              fileMatchesContext(filePath, value.path, {
-                recursive: value.contextParams.recursive,
-                filter: new RegExp(
-                  value.contextParams.filter.pattern,
-                  value.contextParams.filter.flags,
-                ),
-              })
-            ) {
-              modifiedDependencies.push(value.path);
-            }
+            console.log(
+              'Added modified context dependency:',
+              value.path,
+              ' cause:',
+              filePath,
+            );
+            modifiedDependencies.push(value.path);
           }
           return false;
         });
@@ -282,6 +291,11 @@ class DeltaCalculator<T> extends EventEmitter {
       this._options,
     );
 
+    console.log('traverseDependencies:');
+    console.log('- added:', added);
+    console.log('- modified:', modified);
+    console.log('- deleted:', deleted);
+
     return {
       added,
       modified,
@@ -292,31 +306,3 @@ class DeltaCalculator<T> extends EventEmitter {
 }
 
 module.exports = DeltaCalculator;
-
-function fileMatchesContext(
-  testPath: string,
-  inputPath: string,
-  context: $ReadOnly<{
-    /* Should search for files recursively. */
-    recursive: boolean,
-    /* Filter relative paths against a pattern. */
-    filter: RegExp,
-  }>,
-) {
-  const filePath = path.relative(inputPath, testPath);
-
-  // Ignore everything outside of the provided `root`.
-  if (filePath.startsWith('..')) {
-    return false;
-  }
-
-  // Prevent searching in child directories during a non-recursive search.
-  if (!context.recursive && filePath.includes(path.sep)) {
-    return false;
-  }
-
-  if (context.filter.test(filePath)) {
-    return true;
-  }
-  return false;
-}

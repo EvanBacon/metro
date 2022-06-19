@@ -24,6 +24,8 @@ import type {TransformOptions} from '../DeltaBundler/Worker';
 import type {ConfigT} from 'metro-config/src/configTypes.flow';
 import type {Type} from 'metro-transform-worker';
 
+import {getContextModuleId} from './contextModule';
+
 const path = require('path');
 
 type InlineRequiresRaw = {+blockList: {[string]: true, ...}, ...} | boolean;
@@ -191,17 +193,6 @@ function getContextModuleTemplate(
     default:
       throw new Error(`Metro context mode "${mode}" is unimplemented`);
   }
-}
-
-function getContextModuleId(modulePath, context: RequireContextParams) {
-  return [
-    modulePath,
-    context.mode,
-    context.recursive ? 'recursive' : '',
-    new RegExp(context.filter.pattern, context.filter.flags).toString(),
-  ]
-    .filter(Boolean)
-    .join(' ');
 }
 
 /** Generate the default method for transforming a `require.context` module. */

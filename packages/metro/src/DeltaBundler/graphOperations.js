@@ -276,11 +276,16 @@ async function processModule<T>(
   const resolvedContextParams =
     contextParams || (graph.dependencies.get(path) || {}).contextParams;
   console.log('processModule:', path, resolvedContextParams);
+
   // Transform the file via the given option.
   // TODO: Unbind the transform method from options
-  const result = await (resolvedContextParams
-    ? options.transformContext(path, resolvedContextParams)
-    : options.transform(path));
+  let result;
+  if (resolvedContextParams) {
+    const modulePath = removeContextQueryParam(path);
+    result = await options.transformContext(modulePath, resolvedContextParams);
+  } else {
+    result = await options.transform(path);
+  }
 
   // Get the absolute path of all sub-dependencies (some of them could have been
   // moved but maintain the same relative path).
@@ -477,6 +482,11 @@ function removeDependency<T>(
   }
 }
 
+import {
+  appendContextQueryParam,
+  removeContextQueryParam,
+} from '../lib/contextModule';
+
 function resolveDependencies<T>(
   parentPath: string,
   dependencies: $ReadOnlyArray<TransformResultDependency>,
@@ -488,11 +498,19 @@ function resolveDependencies<T>(
     let resolvedDep;
     // `require.context`
     if (dep.data.contextParams) {
-      const absolutePath = path.join(parentPath, '..', dep.name);
+      let absolutePath = path.join(parentPath, '..', dep.name);
+
+      // Ensure the filepath has uniqueness applied to ensure multiple `require.context`
+      // statements can be used to target the same file with different properties.
+      absolutePath = appendContextQueryParam(
+        absolutePath,
+        dep.data.contextParams,
+      );
+
       resolvedDep = {
         // TODO: Verify directory exists
-        absolutePath: absolutePath,
         // absolutePath: options.resolve(parentPath, dep.name),
+        absolutePath: absolutePath,
         data: dep,
       };
     } else {
