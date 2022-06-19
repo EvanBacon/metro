@@ -231,7 +231,7 @@ function getContextModuleTemplate(
         [
           '  // Here Promise.resolve().then() is used instead of new Promise() to prevent',
           '  // uncaught exception popping up in devtools',
-          'return Promise.resolve().then(() => map[key]);',
+          'return Promise.resolve().then(() => map[request]);',
         ].join('\n'),
       );
     case 'sync':
@@ -240,7 +240,7 @@ function getContextModuleTemplate(
         files,
         id,
         'require',
-        'return map[key];',
+        'return map[request];',
       );
     case 'lazy':
     case 'lazy-once':
@@ -249,7 +249,7 @@ function getContextModuleTemplate(
         files,
         id,
         'import',
-        'return map[key];',
+        'return map[request];',
       );
     default:
       throw new Error(`Metro context mode "${mode}" is unimplemented`);

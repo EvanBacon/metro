@@ -139,6 +139,7 @@ export type Options<T = MixedOutput> = {
   +transformOptions: TransformInputOptions,
   +onProgress: ?(numProcessed: number, total: number) => mixed,
   +experimentalImportBundleSupport: boolean,
+  +unstable_allowRequireContext: boolean,
   +shallow: boolean,
 };
 

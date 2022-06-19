@@ -247,33 +247,41 @@ class DeltaCalculator<T> extends EventEmitter {
       (filePath: string) => this._graph.dependencies.has(filePath),
     );
 
-    // Check if any added or removed files are matched in a context module.
-    Array.from(addedFiles)
-      .concat(Array.from(deletedFiles))
-      .forEach((filePath: string) => {
-        this._graph.dependencies.forEach(value => {
-          if (
-            value.contextParams &&
-            !modifiedDependencies.includes(value.path) &&
-            fileMatchesContext(removeContextQueryParam(value.path), filePath, {
-              recursive: value.contextParams.recursive,
-              filter: new RegExp(
-                value.contextParams.filter.pattern,
-                value.contextParams.filter.flags,
-              ),
-            })
-          ) {
-            console.log(
-              'Added modified context dependency:',
-              value.path,
-              ' cause:',
-              filePath,
-            );
-            modifiedDependencies.push(value.path);
-          }
-          return false;
+    // NOTE(EvanBacon): This check adds extra complexity so we feature gate it
+    // to enable users to opt out.
+    if (this._options.unstable_allowRequireContext) {
+      // Check if any added or removed files are matched in a context module.
+      Array.from(addedFiles)
+        .concat(Array.from(deletedFiles))
+        .forEach((filePath: string) => {
+          this._graph.dependencies.forEach(value => {
+            if (
+              value.contextParams &&
+              !modifiedDependencies.includes(value.path) &&
+              fileMatchesContext(
+                removeContextQueryParam(value.path),
+                filePath,
+                {
+                  recursive: value.contextParams.recursive,
+                  filter: new RegExp(
+                    value.contextParams.filter.pattern,
+                    value.contextParams.filter.flags,
+                  ),
+                },
+              )
+            ) {
+              console.log(
+                'Added modified context dependency:',
+                value.path,
+                ' cause:',
+                filePath,
+              );
+              modifiedDependencies.push(value.path);
+            }
+            return false;
+          });
         });
-      });
+    }
 
     // No changes happened. Return empty delta.
     if (modifiedDependencies.length === 0) {
