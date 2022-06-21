@@ -193,7 +193,7 @@ const map = ${createFileMap(
   )};
 
 function metroContext(request) {
-  ${getContextTemplate}
+${getContextTemplate}
 }
 
 // Return the keys that can be resolved.
@@ -233,7 +233,7 @@ function getContextModuleTemplate(
         [
           '  // Here Promise.resolve().then() is used instead of new Promise() to prevent',
           '  // uncaught exception popping up in devtools',
-          'return Promise.resolve().then(() => map[request]);',
+          '  return Promise.resolve().then(() => map[request]);',
         ].join('\n'),
       );
     case 'sync':
@@ -242,7 +242,7 @@ function getContextModuleTemplate(
         files,
         id,
         'require',
-        'return map[request];',
+        '  return map[request];',
       );
     case 'lazy':
     case 'lazy-once':
@@ -251,7 +251,7 @@ function getContextModuleTemplate(
         files,
         id,
         'import',
-        'return map[request];',
+        '  return map[request];',
       );
     default:
       throw new Error(`Metro context mode "${mode}" is unimplemented`);

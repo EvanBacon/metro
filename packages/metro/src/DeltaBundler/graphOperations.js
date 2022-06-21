@@ -40,8 +40,13 @@ import type {
 } from './types.flow';
 import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
 
-const path = require('path');
+import * as path from 'path';
+
 import CountingSet from '../lib/CountingSet';
+import {
+  appendContextQueryParam,
+  removeContextQueryParam,
+} from '../lib/contextModule';
 
 const invariant = require('invariant');
 const nullthrows = require('nullthrows');
@@ -168,7 +173,6 @@ async function traverseDependencies<T>(
 
   const internalOptions = getInternalOptions(options);
 
-  console.log('traverseDependencies:', paths);
   for (const path of paths) {
     // Start traversing from modules that are already part of the dependency graph.
     if (graph.dependencies.get(path)) {
@@ -275,7 +279,6 @@ async function processModule<T>(
 ): Promise<Module<T>> {
   const resolvedContextParams =
     contextParams || (graph.dependencies.get(path) || {}).contextParams;
-  console.log('processModule:', path, resolvedContextParams);
 
   // Transform the file via the given option.
   // TODO: Unbind the transform method from options
@@ -359,7 +362,6 @@ async function processModule<T>(
 
   // $FlowFixMe[cannot-write]
   module.dependencies = currentDependencies;
-  console.log('processModule.end:', path, module);
 
   return module;
 }
@@ -379,12 +381,6 @@ async function addDependency<T>(
   let module = graph.dependencies.get(path);
 
   if (options.shallow) {
-    console.log(
-      'addDependency.shallow:',
-      module,
-      dependency.data.data.contextParams,
-    );
-
     // Don't add a node for the module if the graph is shallow (single-module).
   } else if (
     options.experimentalImportBundleSupport &&
@@ -481,11 +477,6 @@ function removeDependency<T>(
     releaseModule(module, graph, delta, options);
   }
 }
-
-import {
-  appendContextQueryParam,
-  removeContextQueryParam,
-} from '../lib/contextModule';
 
 function resolveDependencies<T>(
   parentPath: string,
