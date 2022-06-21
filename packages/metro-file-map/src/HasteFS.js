@@ -98,6 +98,7 @@ export default class HasteFS {
     }>,
   ): Array<Path> {
     const files = [];
+    const prefix = '.' + path.sep;
     for (const file of this.getAbsoluteFileIterator()) {
       const filePath = fastPath.relative(root, file);
 
@@ -118,7 +119,7 @@ export default class HasteFS {
           // NOTE(EvanBacon): Ensure files start with `./` for matching purposes
           // this ensures packages work across Metro and Webpack (ex: Storybook for React DOM / React Native).
           // `a/b.js` -> `./a/b.js`
-          '.' + path.sep + filePath,
+          prefix + filePath,
         )
       ) {
         files.push(file);
