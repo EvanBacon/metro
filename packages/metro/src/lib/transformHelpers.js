@@ -258,6 +258,7 @@ function getContextModuleTemplate(
   }
 }
 
+import {fileMatchesContext} from './contextModule';
 /** Generate the default method for transforming a `require.context` module. */
 async function getTransformContextFn(
   entryFiles: $ReadOnlyArray<string>,
@@ -274,16 +275,55 @@ async function getTransformContextFn(
     options,
   );
 
+  // Cache all of the modules for intermittent updates.
+  const moduleCache = {};
+
   return async (modulePath: string, requireContext: RequireContextParams) => {
     const graph = await bundler.getDependencyGraph();
+
+    // TODO: do this earlier, prefer right after serialized.
     const filter = new RegExp(
       requireContext.filter.pattern,
       requireContext.filter.flags,
     );
-    const files = graph.matchFilesWithContext(modulePath, {
-      recursive: requireContext.recursive,
-      filter,
-    });
+
+    console.time('match-context-' + modulePath);
+    let files = [];
+    if (modulePath in moduleCache && requireContext.delta) {
+      // Get the cached modules
+      files = moduleCache[modulePath];
+
+      // Remove files from the cache.
+      const deletedFiles = requireContext.delta.deletedFiles;
+      if (deletedFiles.size) {
+        files = files.filter(filePath => !deletedFiles.has(filePath));
+      }
+
+      // Add files to the cache.
+      const addedFiles = requireContext.delta.addedFiles;
+      addedFiles.forEach(filePath => {
+        if (
+          !files.includes(filePath) &&
+          fileMatchesContext(modulePath, filePath, {
+            recursive: requireContext.recursive,
+            filter,
+          })
+        ) {
+          files.push(filePath);
+        }
+      });
+    } else {
+      // Search against all files, this is very expensive.
+      // TODO: Maybe we could let the user specify which root to check against.
+      files = graph.matchFilesWithContext(modulePath, {
+        recursive: requireContext.recursive,
+        filter,
+      });
+    }
+
+    moduleCache[modulePath] = files;
+
+    console.timeEnd('match-context-' + modulePath);
 
     const template = getContextModuleTemplate(
       requireContext.mode,

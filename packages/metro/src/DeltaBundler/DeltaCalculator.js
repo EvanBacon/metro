@@ -250,14 +250,23 @@ class DeltaCalculator<T> extends EventEmitter {
     // NOTE(EvanBacon): This check adds extra complexity so we feature gate it
     // to enable users to opt out.
     if (this._options.unstable_allowRequireContext) {
+      console.time('inverse-context-changes');
       // Check if any added or removed files are matched in a context module.
       Array.from(addedFiles)
         .concat(Array.from(deletedFiles))
         .forEach((filePath: string) => {
           this._graph.dependencies.forEach(value => {
+            if (!value.contextParams) return;
+
+            if (modifiedDependencies.includes(value.path)) {
+              value.contextParams.delta = {
+                addedFiles,
+                deletedFiles,
+              };
+              return;
+            }
+
             if (
-              value.contextParams &&
-              !modifiedDependencies.includes(value.path) &&
               fileMatchesContext(
                 removeContextQueryParam(value.path),
                 filePath,
@@ -277,10 +286,15 @@ class DeltaCalculator<T> extends EventEmitter {
                 filePath,
               );
               modifiedDependencies.push(value.path);
+              value.contextParams.delta = {
+                addedFiles,
+                deletedFiles,
+              };
             }
             return false;
           });
         });
+      console.timeEnd('inverse-context-changes');
     }
 
     // No changes happened. Return empty delta.
