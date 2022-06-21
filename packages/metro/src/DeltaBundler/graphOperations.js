@@ -37,8 +37,8 @@ import type {
   Module,
   Options,
   TransformResultDependency,
+  RequireContext,
 } from './types.flow';
-import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
 
 import * as path from 'path';
 
@@ -265,7 +265,13 @@ async function traverseDependenciesForSingleFile<T>(
 ): Promise<void> {
   options.onDependencyAdd();
 
-  await processModule(path, graph, delta, options);
+  await processModule(
+    path,
+    graph,
+    delta,
+    options,
+    graph.dependencies.get(path)?.contextParams,
+  );
 
   options.onDependencyAdded();
 }
@@ -275,7 +281,7 @@ async function processModule<T>(
   graph: Graph<T>,
   delta: Delta,
   options: InternalOptions<T>,
-  contextParams?: RequireContextParams,
+  contextParams?: RequireContext,
 ): Promise<Module<T>> {
   const resolvedContextParams =
     contextParams || (graph.dependencies.get(path) || {}).contextParams;
@@ -410,10 +416,6 @@ async function addDependency<T>(
         delta.earlyInverseDependencies.set(path, new CountingSet());
 
         options.onDependencyAdd();
-        const resolvedContextParams =
-          dependency.data.data.contextParams ||
-          (graph.dependencies.get(path) || {}).contextParams;
-
         module = await processModule(
           path,
           graph,

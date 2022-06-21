@@ -15,16 +15,15 @@ import type DeltaBundler, {TransformFn} from '../DeltaBundler';
 import type {
   TransformContextFn,
   TransformInputOptions,
+  RequireContext,
 } from '../DeltaBundler/types.flow';
-import type {
-  RequireContextParams,
-  ContextMode,
-} from '../ModuleGraph/worker/collectDependencies';
+import type {ContextMode} from '../ModuleGraph/worker/collectDependencies';
 import type {TransformOptions} from '../DeltaBundler/Worker';
 import type {ConfigT} from 'metro-config/src/configTypes.flow';
 import type {Type} from 'metro-transform-worker';
 
-import {getContextModuleId} from './contextModule';
+import {getContextModuleTemplate} from './contextModuleTemplates';
+import {getContextModuleId, fileMatchesContext} from './contextModule';
 
 const path = require('path');
 
@@ -124,141 +123,6 @@ function removeInlineRequiresBlockListFromOptions(
   return inlineRequires;
 }
 
-function createFileMap(
-  modulePath: string,
-  files: string[],
-  processModule: (moduleId: string) => string,
-) {
-  let mapString = '';
-
-  files.map(file => {
-    let filePath = path.relative(modulePath, file);
-
-    // NOTE(EvanBacon): I'd prefer we prevent the ability for a module to require itself (`require.context('./')`)
-    // but Webpack allows this, keeping it here provides better parity between bundlers.
-
-    // Ensure relative file paths start with `./` so they match the
-    // patterns (filters) used to include them.
-    if (!filePath.startsWith('.')) {
-      filePath = `.${path.sep}` + filePath;
-    }
-    const key = JSON.stringify(filePath);
-    // NOTE(EvanBacon): Webpack uses `require.resolve` in order to load modules on demand,
-    // Metro doesn't have this functionality so it will use getters instead. Modules need to
-    // be loaded on demand because if we imported directly then users would get errors from importing
-    // a file without exports as soon as they create a new file and the context module is updated.
-
-    // NOTE: The values are set to `enumerable` so the `context.keys()` method works as expected.
-    mapString += `${key}: { enumerable: true, get() { return ${processModule(
-      file,
-    )}; } },`;
-  });
-  return `Object.defineProperties({}, {${mapString}})`;
-}
-
-function getEmptyContextModuleTemplate(modulePath: string, id: string): string {
-  return `
-function metroEmptyContext(request) {
-  let e = new Error("No modules for context '" + ${JSON.stringify(id)} + "'");
-  e.code = 'MODULE_NOT_FOUND';
-  throw e;
-}
-
-// Return the keys that can be resolved.
-metroEmptyContext.keys = () => ([]);
-
-// Return the module identifier for a user request.
-metroEmptyContext.resolve = function metroContextResolve(request) {
-  throw new Error('Unimplemented Metro module context functionality');
-}
-
-// Readable identifier for the context module.
-metroEmptyContext.id = ${JSON.stringify(id)};
-
-module.exports = metroEmptyContext;`;
-}
-
-function getLoadableContextModuleTemplate(
-  modulePath: string,
-  files: string[],
-  id: string,
-  importSyntax: string,
-  getContextTemplate: string,
-): string {
-  return `// All of the requested modules are loaded behind enumerable getters.
-const map = ${createFileMap(
-    modulePath,
-    files,
-    moduleId => `${importSyntax}(${JSON.stringify(moduleId)})`,
-  )};
-
-function metroContext(request) {
-${getContextTemplate}
-}
-
-// Return the keys that can be resolved.
-metroContext.keys = function metroContextKeys() {
-  return Object.keys(map);
-};
-
-// Return the module identifier for a user request.
-metroContext.resolve = function metroContextResolve(request) {
-  throw new Error('Unimplemented Metro module context functionality');
-}
-
-// Readable identifier for the context module.
-metroContext.id = ${JSON.stringify(id)};
-
-module.exports = metroContext;`;
-}
-
-function getContextModuleTemplate(
-  mode: ContextMode,
-  modulePath: string,
-  files: string[],
-  id: string,
-): string {
-  if (!files.length) {
-    return getEmptyContextModuleTemplate(modulePath, id);
-  }
-  switch (mode) {
-    case 'eager':
-      return getLoadableContextModuleTemplate(
-        modulePath,
-        files,
-        id,
-        // NOTE(EvanBacon): It's unclear if we should use `import` or `require` here so sticking
-        // with the more stable option (`require`) for now.
-        'require',
-        [
-          '  // Here Promise.resolve().then() is used instead of new Promise() to prevent',
-          '  // uncaught exception popping up in devtools',
-          '  return Promise.resolve().then(() => map[request]);',
-        ].join('\n'),
-      );
-    case 'sync':
-      return getLoadableContextModuleTemplate(
-        modulePath,
-        files,
-        id,
-        'require',
-        '  return map[request];',
-      );
-    case 'lazy':
-    case 'lazy-once':
-      return getLoadableContextModuleTemplate(
-        modulePath,
-        files,
-        id,
-        'import',
-        '  return map[request];',
-      );
-    default:
-      throw new Error(`Metro context mode "${mode}" is unimplemented`);
-  }
-}
-
-import {fileMatchesContext} from './contextModule';
 /** Generate the default method for transforming a `require.context` module. */
 async function getTransformContextFn(
   entryFiles: $ReadOnlyArray<string>,
@@ -278,16 +142,9 @@ async function getTransformContextFn(
   // Cache all of the modules for intermittent updates.
   const moduleCache = {};
 
-  return async (modulePath: string, requireContext: RequireContextParams) => {
+  return async (modulePath: string, requireContext: RequireContext) => {
     const graph = await bundler.getDependencyGraph();
 
-    // TODO: do this earlier, prefer right after serialized.
-    const filter = new RegExp(
-      requireContext.filter.pattern,
-      requireContext.filter.flags,
-    );
-
-    console.time('match-context-' + modulePath);
     let files = [];
     if (modulePath in moduleCache && requireContext.delta) {
       // Get the cached modules
@@ -300,14 +157,11 @@ async function getTransformContextFn(
       }
 
       // Add files to the cache.
-      const addedFiles = requireContext.delta.addedFiles;
-      addedFiles.forEach(filePath => {
+      const addedFiles = requireContext.delta?.addedFiles;
+      addedFiles?.forEach(filePath => {
         if (
           !files.includes(filePath) &&
-          fileMatchesContext(modulePath, filePath, {
-            recursive: requireContext.recursive,
-            filter,
-          })
+          fileMatchesContext(modulePath, filePath, requireContext)
         ) {
           files.push(filePath);
         }
@@ -316,14 +170,12 @@ async function getTransformContextFn(
       // Search against all files, this is very expensive.
       // TODO: Maybe we could let the user specify which root to check against.
       files = graph.matchFilesWithContext(modulePath, {
+        filter: requireContext.filter,
         recursive: requireContext.recursive,
-        filter,
       });
     }
 
     moduleCache[modulePath] = files;
-
-    console.timeEnd('match-context-' + modulePath);
 
     const template = getContextModuleTemplate(
       requireContext.mode,

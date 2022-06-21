@@ -10,11 +10,28 @@
 
 'use strict';
 
-import type {RequireContextParams} from '../ModuleGraph/worker/collectDependencies';
+import type {
+  RequireContextParams,
+  ContextMode,
+} from '../ModuleGraph/worker/collectDependencies';
 import type {PrivateState} from './graphOperations';
 import type {JsTransformOptions} from 'metro-transform-worker';
 
 import CountingSet from '../lib/CountingSet';
+
+export type RequireContext = {
+  /* Should search for files recursively. Optional, default `true` when `require.context` is used */
+  recursive: boolean,
+  /* Filename filter pattern for use in `require.context`. Optional, default `.*` (any file) when `require.context` is used */
+  filter: RegExp,
+  /** Mode for resolving dynamic dependencies. Defaults to `sync` */
+  mode: ContextMode,
+  /** Optional delta between context updates provided as an optimization for subsequent updates. */
+  delta?: {
+    addedFiles: Set<string>,
+    deletedFiles: Set<string>,
+  },
+};
 
 export type MixedOutput = {
   +data: mixed,
@@ -53,8 +70,6 @@ export type TransformResultDependency = {
      */
     +isOptional?: boolean,
 
-    +contextParams?: RequireContextParams,
-
     +locs: $ReadOnlyArray<BabelSourceLocation>,
 
     /** Context for requiring a collection of modules. */
@@ -68,7 +83,7 @@ export type Dependency = {
 };
 
 export type Module<T = MixedOutput> = {
-  +contextParams?: RequireContextParams,
+  +contextParams?: RequireContext,
   +dependencies: Map<string, Dependency>,
   +inverseDependencies: CountingSet<string>,
   +output: $ReadOnlyArray<T>,
@@ -117,7 +132,7 @@ export type TransformFn<T = MixedOutput> = string => Promise<
 /** Transformer for generating `require.context` virtual module. */
 export type TransformContextFn<T = MixedOutput> = (
   string,
-  RequireContextParams,
+  RequireContext,
 ) => Promise<TransformResultWithSource<T>>;
 
 export type AllowOptionalDependenciesWithOptions = {
@@ -128,11 +143,7 @@ export type AllowOptionalDependencies =
   | AllowOptionalDependenciesWithOptions;
 
 export type Options<T = MixedOutput> = {
-  +resolve: (
-    from: string,
-    to: string,
-    context?: ?RequireContextParams,
-  ) => string,
+  +resolve: (from: string, to: string, context?: ?RequireContext) => string,
   +transform: TransformFn<T>,
   /** Given a path and require context, return a virtual context module. */
   +transformContext: TransformContextFn<T>,

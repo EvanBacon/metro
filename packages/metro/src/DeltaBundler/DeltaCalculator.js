@@ -270,13 +270,7 @@ class DeltaCalculator<T> extends EventEmitter {
               fileMatchesContext(
                 removeContextQueryParam(value.path),
                 filePath,
-                {
-                  recursive: value.contextParams.recursive,
-                  filter: new RegExp(
-                    value.contextParams.filter.pattern,
-                    value.contextParams.filter.flags,
-                  ),
-                },
+                value.contextParams,
               )
             ) {
               console.log(
