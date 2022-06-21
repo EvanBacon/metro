@@ -284,7 +284,7 @@ async function processModule<T>(
   contextParams?: RequireContext,
 ): Promise<Module<T>> {
   const resolvedContextParams =
-    contextParams || (graph.dependencies.get(path) || {}).contextParams;
+    contextParams || graph.dependencies.get(path)?.contextParams;
 
   // Transform the file via the given option.
   // TODO: Unbind the transform method from options
