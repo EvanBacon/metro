@@ -18,18 +18,23 @@ export function getContextModuleId(modulePath: string, context: RequireContextPa
 }
 
 function toHash(value: string): string {
-    return crypto.createHash('sha1').update(value).digest('hex');
+  // Use `hex` to ensure filepath safety.
+  return crypto.createHash('sha1').update(value).digest('hex');
 }
 
 /** Given a virtualized path, strip the virtual component and return a path that could be real. */
 export function removeContextQueryParam(virtualFilePath: string): string {
-    const [filepath] = virtualFilePath.split('?ctx=');
-    return filepath;
+  const [filepath] = virtualFilePath.split('?ctx=');
+  return filepath;
 }
 
 /** Given a path and a require context, return a virtual file path that ensures uniqueness between paths with different contexts. */
 export function appendContextQueryParam(filePath: string, context: RequireContextParams): string {
-    return filePath + '?ctx=' + toHash(getContextModuleId(filePath, context));
+  // Drop the trailing slash, require.context should always be matched against a folder
+  // and we want to normalize the folder name as much as possible to prevent duplicates.
+  // This also makes the files show up in the correct location when debugging in Chrome.
+  filePath = filePath.endsWith('/') ? filePath.slice(0, -1) : filePath;
+  return filePath + '?ctx=' + toHash(getContextModuleId(filePath, context));
 }
 
 /** Match a file against a require context. */

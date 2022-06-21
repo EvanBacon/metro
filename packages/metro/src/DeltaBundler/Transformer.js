@@ -123,6 +123,7 @@ class Transformer {
 
     let sha1;
     if (fileBuffer) {
+      // TODO: Possibly remove this in favor of a virtual file system.
       sha1 = crypto.createHash('sha1').update(fileBuffer).digest('hex');
     } else {
       sha1 = this._getSha1(filePath);
