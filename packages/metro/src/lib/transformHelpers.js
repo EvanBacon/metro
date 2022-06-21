@@ -87,6 +87,8 @@ async function calcTransformerOptions(
       onProgress: null,
       experimentalImportBundleSupport:
         config.transformer.experimentalImportBundleSupport,
+      unstable_allowRequireContext:
+        config.transformer.unstable_allowRequireContext,
       shallow: false,
     });
 
