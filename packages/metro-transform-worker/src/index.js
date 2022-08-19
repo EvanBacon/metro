@@ -313,6 +313,10 @@ async function transformJS(
     importDefault,
     importAll,
   };
+  const minify =
+    options.minify &&
+    options.unstable_transformProfile !== 'hermes-canary' &&
+    options.unstable_transformProfile !== 'hermes-stable';
 
   if (options.experimentalImportSupport === true) {
     plugins.push([metroTransformPlugins.importExportPlugin, babelPluginOpts]);
@@ -329,26 +333,30 @@ async function transformJS(
     ]);
   }
 
-  plugins.push([metroTransformPlugins.inlinePlugin, babelPluginOpts]);
+  if (minify) {
+    plugins.push([metroTransformPlugins.inlinePlugin, babelPluginOpts]);
+  }
 
-  ast = nullthrows(
-    transformFromAstSync(ast, '', {
-      ast: true,
-      babelrc: false,
-      code: false,
-      configFile: false,
-      comments: false,
-      filename: file.filename,
-      plugins,
-      sourceMaps: false,
-      // Not-Cloning the input AST here should be safe because other code paths above this call
-      // are mutating the AST as well and no code is depending on the original AST.
-      // However, switching the flag to false caused issues with ES Modules if `experimentalImportSupport` isn't used https://github.com/facebook/metro/issues/641
-      // either because one of the plugins is doing something funky or Babel messes up some caches.
-      // Make sure to test the above mentioned case before flipping the flag back to false.
-      cloneInputAst: true,
-    }).ast,
-  );
+  if (plugins.length) {
+    ast = nullthrows(
+      transformFromAstSync(ast, '', {
+        ast: true,
+        babelrc: false,
+        code: false,
+        configFile: false,
+        comments: false,
+        filename: file.filename,
+        plugins,
+        sourceMaps: false,
+        // Not-Cloning the input AST here should be safe because other code paths above this call
+        // are mutating the AST as well and no code is depending on the original AST.
+        // However, switching the flag to false caused issues with ES Modules if `experimentalImportSupport` isn't used https://github.com/facebook/metro/issues/641
+        // either because one of the plugins is doing something funky or Babel messes up some caches.
+        // Make sure to test the above mentioned case before flipping the flag back to false.
+        cloneInputAst: true,
+      }).ast,
+    );
+  }
 
   if (!options.dev) {
     // Run the constant folding plugin in its own pass, avoiding race conditions
@@ -422,11 +430,6 @@ async function transformJS(
       ));
     }
   }
-
-  const minify =
-    options.minify &&
-    options.unstable_transformProfile !== 'hermes-canary' &&
-    options.unstable_transformProfile !== 'hermes-stable';
 
   const reserved = [];
   if (config.unstable_dependencyMapReservedName != null) {
