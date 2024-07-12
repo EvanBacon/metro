@@ -58,6 +58,7 @@ export type TransformResultDependency = $ReadOnly<{
 
 export type Dependency = $ReadOnly<{
   absolutePath: string,
+  resolutionMeta: ?{...},
   data: TransformResultDependency,
 }>;
 
@@ -71,6 +72,7 @@ export type Module<T = MixedOutput> = $ReadOnly<{
 }>;
 
 export type ModuleData<T = MixedOutput> = $ReadOnly<{
+  resolutionMeta: ?{...},
   dependencies: $ReadOnlyMap<string, Dependency>,
   resolvedContexts: $ReadOnlyMap<string, RequireContext>,
   output: $ReadOnlyArray<T>,
@@ -139,6 +141,7 @@ export type AllowOptionalDependencies =
 export type BundlerResolution = $ReadOnly<{
   type: 'sourceFile',
   filePath: string,
+  meta?: {...},
 }>;
 
 export type Options<T = MixedOutput> = {

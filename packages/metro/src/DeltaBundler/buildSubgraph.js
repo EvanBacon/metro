@@ -62,13 +62,16 @@ function resolveDependencies(
       resolvedContexts.set(key, resolvedContext);
 
       resolvedDep = {
+        resolutionMeta: undefined,
         absolutePath,
         data: dep,
       };
     } else {
       try {
+        const resolution = resolve(parentPath, dep);
         resolvedDep = {
-          absolutePath: resolve(parentPath, dep).filePath,
+          absolutePath: resolution.filePath,
+          resolutionMeta: resolution.meta,
           data: dep,
         };
       } catch (error) {
@@ -116,6 +119,7 @@ export async function buildSubgraph<T>(
 
   async function visit(
     absolutePath: string,
+    resolutionMeta: ?{...},
     requireContext: ?RequireContext,
   ): Promise<void> {
     if (visitedPaths.has(absolutePath)) {
@@ -133,6 +137,7 @@ export async function buildSubgraph<T>(
     );
 
     moduleData.set(absolutePath, {
+      resolutionMeta,
       ...transformResult,
       ...resolutionResult,
     });
@@ -143,6 +148,7 @@ export async function buildSubgraph<T>(
         .map(([key, dependency]) =>
           visit(
             dependency.absolutePath,
+            dependency.resolutionMeta,
             resolutionResult.resolvedContexts.get(dependency.data.data.key),
           ).catch(error => errors.set(dependency.absolutePath, error)),
         ),
@@ -151,8 +157,8 @@ export async function buildSubgraph<T>(
 
   await Promise.all(
     [...entryPaths].map(absolutePath =>
-      visit(absolutePath, resolvedContexts.get(absolutePath)).catch(error =>
-        errors.set(absolutePath, error),
+      visit(absolutePath, undefined, resolvedContexts.get(absolutePath)).catch(
+        error => errors.set(absolutePath, error),
       ),
     ),
   );
