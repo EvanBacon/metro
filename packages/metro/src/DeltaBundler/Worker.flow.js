@@ -9,25 +9,19 @@
  * @oncall react_native
  */
 
-'use strict';
-
-import type {TransformResult} from './types.flow';
-import type {LogEntry} from 'metro-core/src/Logger';
+import type {TransformResult} from './types';
+import type {LogEntry} from 'metro-core/private/Logger';
 import type {
   JsTransformerConfig,
   JsTransformOptions,
 } from 'metro-transform-worker';
 
-const traverse = require('@babel/traverse').default;
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+import traverse from '@babel/traverse';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type {JsTransformOptions as TransformOptions} from 'metro-transform-worker';
-
-export type Worker = {
-  +transform: typeof transform,
-};
 
 type TransformerInterface = {
   transform(
@@ -45,7 +39,7 @@ export type TransformerConfig = {
   ...
 };
 
-type Data = $ReadOnly<{
+type Data = Readonly<{
   result: TransformResult<>,
   sha1: string,
   transformFileStartLogEntry: LogEntry,
@@ -66,16 +60,19 @@ function asDeserializedBuffer(value: any): Buffer | null {
   if (value && value.type === 'Buffer') {
     return Buffer.from(value.data);
   }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
   return null;
 }
 
-async function transform(
+export const transform = (
   filename: string,
   transformOptions: JsTransformOptions,
   projectRoot: string,
   transformerConfig: TransformerConfig,
   fileBuffer?: Buffer,
-): Promise<Data> {
+): Promise<Data> => {
   let data;
 
   const fileBufferObject = asDeserializedBuffer(fileBuffer);
@@ -91,10 +88,14 @@ async function transform(
     projectRoot,
     transformerConfig,
   );
-}
+};
+
+export type Worker = {
+  readonly transform: typeof transform,
+};
 
 async function transformFile(
-  filename: string,
+  projectRelativePath: string,
   data: Buffer,
   transformOptions: JsTransformOptions,
   projectRoot: string,
@@ -106,10 +107,10 @@ async function transformFile(
     transformerConfig.transformerPath,
   );
 
-  const transformFileStartLogEntry = {
+  const transformFileStartLogEntry: LogEntry = {
     action_name: 'Transforming file',
     action_phase: 'start',
-    file_name: filename,
+    file_name: projectRelativePath,
     log_entry_label: 'Transforming file',
     start_timestamp: process.hrtime(),
   };
@@ -119,7 +120,7 @@ async function transformFile(
   const result = await Transformer.transform(
     transformerConfig.transformerConfig,
     projectRoot,
-    filename,
+    projectRelativePath,
     data,
     transformOptions,
   );
@@ -134,7 +135,7 @@ async function transformFile(
 
   const transformFileEndLogEntry = getEndLogEntry(
     transformFileStartLogEntry,
-    filename,
+    projectRelativePath,
   );
 
   return {
@@ -157,7 +158,3 @@ function getEndLogEntry(startLogEntry: LogEntry, filename: string): LogEntry {
     log_entry_label: 'Transforming file',
   };
 }
-
-module.exports = ({
-  transform,
-}: Worker);

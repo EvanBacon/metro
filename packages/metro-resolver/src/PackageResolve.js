@@ -11,8 +11,8 @@
 
 import type {PackageInfo, PackageJson, ResolutionContext} from './types';
 
-import toPosixPath from './utils/toPosixPath';
-import path from 'path';
+import {systemToPosixPath} from './utils/paths';
+import path from 'node:path';
 
 /**
  * Resolve the main entry point subpath for a package.
@@ -31,6 +31,7 @@ export function getPackageEntryPoint(
   let main = 'index';
 
   for (const name of mainFields) {
+    // $FlowFixMe[invalid-computed-prop]
     if (typeof pkg[name] === 'string' && pkg[name].length) {
       main = pkg[name];
       break;
@@ -68,11 +69,9 @@ export function getPackageEntryPoint(
  *
  * Implements legacy (non-exports) package resolution behaviour based on the
  * ["browser" field spec](https://github.com/defunctzombie/package-browser-field-spec).
- *
- * This is the default implementation of `context.redirectModulePath`.
  */
 export function redirectModulePath(
-  context: $ReadOnly<{
+  context: Readonly<{
     getPackageForModule: ResolutionContext['getPackageForModule'],
     mainFields: ResolutionContext['mainFields'],
     originModulePath: ResolutionContext['originModulePath'],
@@ -96,9 +95,10 @@ export function redirectModulePath(
   modulePath: string,
 ): string | false {
   const {getPackageForModule, mainFields, originModulePath} = context;
+  const isModulePathAbsolute = path.isAbsolute(modulePath);
 
   const containingPackage = getPackageForModule(
-    path.isAbsolute(modulePath) ? modulePath : originModulePath,
+    isModulePathAbsolute ? modulePath : originModulePath,
   );
 
   if (containingPackage == null) {
@@ -108,14 +108,22 @@ export function redirectModulePath(
 
   let redirectedPath;
 
-  if (modulePath.startsWith('.') || path.isAbsolute(modulePath)) {
-    const packageRelativeModulePath = path.relative(
-      containingPackage.rootPath,
-      path.resolve(path.dirname(originModulePath), modulePath),
-    );
+  if (modulePath.startsWith('.') || isModulePathAbsolute) {
+    const packageRelativeModulePath = isModulePathAbsolute
+      ? // If the module path is absolute, containingPackage is relative to it
+        // (see above).
+        containingPackage.packageRelativePath
+      : // Otherwise containingPackage is relative to the origin module.
+        // Origin's package-relative directory joined with the target module's
+        // origin-relative path gives us the module's package-relative path.
+        path.join(
+          path.dirname(containingPackage.packageRelativePath),
+          modulePath,
+        );
+
     redirectedPath = matchSubpathFromMainFields(
       // Use prefixed POSIX path for lookup in package.json
-      './' + toPosixPath(packageRelativeModulePath),
+      './' + systemToPosixPath(packageRelativeModulePath),
       containingPackage.packageJson,
       mainFields,
     );
@@ -124,7 +132,9 @@ export function redirectModulePath(
       // BRITTLE ASSUMPTION: This is always treated as a package-relative path
       // and is converted back, even if the redirected path is a specifier
       // referring to another package.
-      redirectedPath = path.resolve(containingPackage.rootPath, redirectedPath);
+      redirectedPath = path.isAbsolute(redirectedPath)
+        ? path.normalize(redirectedPath)
+        : path.join(containingPackage.rootPath, redirectedPath);
     }
   } else {
     // Otherwise, `modulePath` may be an unprefixed relative path or a bare
@@ -154,32 +164,46 @@ export function redirectModulePath(
  * - `false`, indicating the module should be ignored.
  * - `null` when there is no entry for the subpath.
  */
-function matchSubpathFromMainFields(
+export function matchSubpathFromMainFields(
   /**
    * The subpath, or set of subpath variants, to match. Can be either a
    * package-relative subpath (beginning with '.') or a bare import specifier
    * which may replace a module in another package.
    */
-  subpath: string | $ReadOnlyArray<string>,
+  subpath: string | ReadonlyArray<string>,
   pkg: PackageJson,
-  mainFields: $ReadOnlyArray<string>,
+  mainFields: ReadonlyArray<string>,
 ): string | false | null {
-  const fieldValues = mainFields
-    .map(name => pkg[name])
-    .filter(value => value != null && typeof value !== 'string');
+  // Merge object-valued main fields ("browser"-style maps) into a single
+  // replacement map. We iterate `mainFields` in reverse so that, on a key
+  // conflict, earlier `mainFields` win, equivalent to
+  // `Object.assign({}, ...fieldValues.reverse())`, but avoiding any allocation
+  // in the the most common case (no object-valued field, e.g. only a string
+  // "main"/"browser").
+  let replacements: {[string]: string | false} | null = null;
+  for (let i = mainFields.length - 1; i >= 0; i--) {
+    // $FlowFixMe[invalid-computed-prop]
+    const value = pkg[mainFields[i]];
+    if (value != null && typeof value !== 'string') {
+      if (replacements == null) {
+        replacements = {};
+      }
+      replacements = {...replacements, ...value};
+    }
+  }
 
-  if (!fieldValues.length) {
+  if (replacements == null) {
     return null;
   }
 
-  const replacements = Object.assign({}, ...fieldValues.reverse());
+  // The list of subpath variants is only built in this rare matched case (a
+  // single subpath is expanded to its "browser"-spec variants; a pre-expanded
+  // array is matched as-is).
   const variants = Array.isArray(subpath)
     ? subpath
     : expandSubpathVariants(subpath);
-
   for (const variant of variants) {
     const replacement = replacements[variant];
-
     if (replacement != null) {
       return replacement;
     }

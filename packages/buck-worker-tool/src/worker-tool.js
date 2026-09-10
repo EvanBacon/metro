@@ -9,25 +9,23 @@
  * @oncall react_native
  */
 
-'use strict';
+import type {Duplex, Writable} from 'node:stream';
 
-import type {Writable} from 'stream';
-
-const {startProfiling, stopProfilingAndWrite} = require('./profiling');
-const JSONStream = require('./third-party/JSONStream');
-const {Console} = require('console');
-const duplexer = require('duplexer');
-const fs = require('fs');
-const invariant = require('invariant');
+import {startProfiling, stopProfilingAndWrite} from './profiling';
+import JSONStream from './third-party/JSONStream';
+import duplexer from 'duplexer';
+import invariant from 'invariant';
+import {Console} from 'node:console';
+import fs from 'node:fs';
 
 export type Command = (
   argv: Array<string>,
-  structuredArgs: mixed,
+  structuredArgs: unknown,
   console: Console,
 ) => Promise<void> | void;
 export type Commands = {[key: string]: Command, ...};
 
-type Message<Type: string, Data> = Data & {
+type Message<Type extends string, Data> = Data & {
   id: number,
   type: Type,
   ...
@@ -69,8 +67,8 @@ type IncomingMessage = HandshakeMessage | CommandMessage;
 type Response = HandshakeReponse | CommandResponse | ErrorResponse;
 type RespondFn = (response: Response) => void;
 
-type JSONReaderDataHandler = IncomingMessage => mixed;
-type JSONReaderEndHandler = () => mixed;
+type JSONReaderDataHandler = IncomingMessage => unknown;
+type JSONReaderEndHandler = () => unknown;
 
 type JSONReaderDataListener = ('data', JSONReaderDataHandler) => JSONReader;
 type JSONReaderEndListener = ('end', JSONReaderEndHandler) => JSONReader;
@@ -94,7 +92,7 @@ type JSONWriter = {
   ...
 };
 
-function buckWorker(commands: Commands): any {
+function buckWorker(commands: Commands): Duplex {
   const reader: JSONReader = JSONStream.parse('*');
   const writer: JSONWriter = JSONStream.stringify();
 
@@ -181,9 +179,9 @@ function handshakeResponse(message: IncomingMessage) {
 
   return {
     id: message.id,
-    type: 'handshake',
-    protocol_version: '0',
-    capabilities: ([]: []),
+    type: 'handshake' as const,
+    protocol_version: '0' as const,
+    capabilities: [] as [],
   };
 }
 
@@ -255,7 +253,7 @@ async function execCommand(
   commandName: string,
   argsString: string,
   args: Array<string>,
-  structuredArgs: mixed,
+  structuredArgs: unknown,
   commandSpecificConsole: Console,
   respond: RespondFn,
   messageId: number,
@@ -281,13 +279,17 @@ function shouldDebugCommand(argsString: string) {
 }
 
 const error = (id: number, exitCode: number) => ({
-  type: 'error',
+  type: 'error' as const,
   id,
   exit_code: exitCode,
 });
 const unknownMessage = (id: number) => error(id, 1);
 const invalidMessage = (id: number) => error(id, 2);
 const commandError = (id: number) => error(id, 3);
-const success = (id: number) => ({type: 'result', id, exit_code: 0});
+const success = (id: number) => ({
+  type: 'result' as const,
+  id,
+  exit_code: 0 as const,
+});
 
-module.exports = buckWorker;
+export {buckWorker};

@@ -9,9 +9,9 @@
  * @oncall react_native
  */
 
-import Resolver from '../index';
+import * as Resolver from '../index';
 import {createPackageAccessors, createResolutionContext} from './utils';
-import path from 'path';
+import path from 'node:path';
 
 // Tests validating Package Exports resolution behaviour. See RFC0534:
 // https://github.com/react-native-community/discussions-and-proposals/blob/master/proposals/0534-metro-package-exports-support.md
@@ -34,7 +34,6 @@ describe('with package exports resolution disabled', () => {
       }),
       originModulePath: '/root/src/main.js',
       unstable_enablePackageExports: false,
-      unstable_getRealPath: null,
     };
 
     expect(Resolver.resolve(context, 'test-pkg', null)).toEqual({
@@ -109,20 +108,17 @@ describe('with package exports resolution disabled', () => {
 describe('with package exports resolution enabled', () => {
   describe('main entry point', () => {
     const baseContext = {
-      ...createResolutionContext(
-        {
-          '/root/src/main.js': '',
-          '/root/node_modules/test-pkg/package.json': '',
-          '/root/node_modules/test-pkg/index.js': '',
-          '/root/node_modules/test-pkg/index-main.js': '',
-          '/root/node_modules/test-pkg/index-exports.js.js': '',
-          '/root/node_modules/test-pkg/index-exports.ios.js': '',
-          '/root/node_modules/test-pkg/symlink.js': {
-            realPath: '/root/node_modules/test-pkg/symlink-target.js',
-          },
+      ...createResolutionContext({
+        '/root/src/main.js': '',
+        '/root/node_modules/test-pkg/package.json': '',
+        '/root/node_modules/test-pkg/index.js': '',
+        '/root/node_modules/test-pkg/index-main.js': '',
+        '/root/node_modules/test-pkg/index-exports.js.js': '',
+        '/root/node_modules/test-pkg/index-exports.ios.js': '',
+        '/root/node_modules/test-pkg/symlink.js': {
+          realPath: '/root/node_modules/test-pkg/symlink-target.js',
         },
-        {enableSymlinks: true},
-      ),
+      }),
       originModulePath: '/root/src/main.js',
       unstable_enablePackageExports: true,
     };
@@ -216,7 +212,6 @@ describe('with package exports resolution enabled', () => {
         ...baseContext,
         ...createPackageAccessors({
           '/root/node_modules/test-pkg/package.json': {
-            main: 'index-main.js',
             exports: './index-exports.js',
           },
         }),
@@ -225,14 +220,16 @@ describe('with package exports resolution enabled', () => {
       test('without expanding `sourceExts`', () => {
         expect(Resolver.resolve(context, 'test-pkg', null)).toEqual({
           type: 'sourceFile',
-          filePath: '/root/node_modules/test-pkg/index-main.js',
+          // [nonstrict] Falls back to index.js based on file resolution
+          filePath: '/root/node_modules/test-pkg/index.js',
         });
       });
 
       test('without expanding platform-specific extensions', () => {
         expect(Resolver.resolve(context, 'test-pkg', 'ios')).toEqual({
           type: 'sourceFile',
-          filePath: '/root/node_modules/test-pkg/index-main.js',
+          // [nonstrict] Falls back to index.js based on file resolution
+          filePath: '/root/node_modules/test-pkg/index.js',
         });
       });
 
@@ -251,6 +248,31 @@ describe('with package exports resolution enabled', () => {
           type: 'sourceFile',
           filePath: '/root/node_modules/test-pkg/symlink-target.js',
         });
+      });
+    });
+
+    describe('array root shorthand', () => {
+      const logWarning = jest.fn();
+      const context = {
+        ...createResolutionContext({
+          '/root/src/main.js': '',
+          '/root/node_modules/test-pkg/index.js': '',
+          '/root/node_modules/test-pkg/foo.js': '',
+          '/root/node_modules/test-pkg/package.json': JSON.stringify({
+            exports: ['bad-specifier', './index.js', './foo.js'],
+          }),
+        }),
+        originModulePath: '/root/src/main.js',
+        unstable_enablePackageExports: true,
+        unstable_logWarning: logWarning,
+      };
+
+      test('should pick the first valid "exports" array entry', () => {
+        expect(Resolver.resolve(context, 'test-pkg', null)).toEqual({
+          type: 'sourceFile',
+          filePath: '/root/node_modules/test-pkg/index.js',
+        });
+        expect(logWarning).not.toHaveBeenCalled();
       });
     });
   });
@@ -305,7 +327,7 @@ describe('with package exports resolution enabled', () => {
       });
       expect(logWarning).toHaveBeenCalledTimes(1);
       expect(logWarning.mock.calls[0][0]).toMatchInlineSnapshot(
-        `"Attempted to import the module \\"/root/node_modules/test-pkg/foo\\" which is not listed in the \\"exports\\" of \\"/root/node_modules/test-pkg\\". Falling back to file-based resolution. Consider updating the call site or asking the package maintainer(s) to expose this API."`,
+        `"Attempted to import the module \\"/root/node_modules/test-pkg/foo\\" which is not listed in the \\"exports\\" of \\"/root/node_modules/test-pkg\\" under the requested subpath \\"./foo\\". Falling back to file-based resolution. Consider updating the call site or asking the package maintainer(s) to expose this API."`,
       );
     });
 
@@ -396,29 +418,6 @@ describe('with package exports resolution enabled', () => {
       expect(logWarning).not.toHaveBeenCalled();
     });
 
-    test('should expand array of strings as subpath mapping (root shorthand)', () => {
-      const logWarning = jest.fn();
-      const context = {
-        ...baseContext,
-        ...createPackageAccessors({
-          '/root/node_modules/test-pkg/package.json': JSON.stringify({
-            exports: ['./index.js', './foo.js'],
-          }),
-        }),
-        unstable_logWarning: logWarning,
-      };
-
-      expect(Resolver.resolve(context, 'test-pkg/index.js', null)).toEqual({
-        type: 'sourceFile',
-        filePath: '/root/node_modules/test-pkg/index.js',
-      });
-      expect(Resolver.resolve(context, 'test-pkg/foo.js', null)).toEqual({
-        type: 'sourceFile',
-        filePath: '/root/node_modules/test-pkg/foo.js',
-      });
-      expect(logWarning).not.toHaveBeenCalled();
-    });
-
     describe('should resolve "exports" target directly', () => {
       test('without expanding `sourceExts`', () => {
         expect(Resolver.resolve(baseContext, 'test-pkg/foo.js', null)).toEqual({
@@ -453,7 +452,7 @@ describe('with package exports resolution enabled', () => {
         );
         expect(logWarning).toHaveBeenCalledTimes(1);
         expect(logWarning.mock.calls[0][0]).toMatchInlineSnapshot(
-          `"Attempted to import the module \\"/root/node_modules/test-pkg/private/bar\\" which is not listed in the \\"exports\\" of \\"/root/node_modules/test-pkg\\". Falling back to file-based resolution. Consider updating the call site or asking the package maintainer(s) to expose this API."`,
+          `"Attempted to import the module \\"/root/node_modules/test-pkg/private/bar\\" which is not listed in the \\"exports\\" of \\"/root/node_modules/test-pkg\\" under the requested subpath \\"./private/bar\\". Falling back to file-based resolution. Consider updating the call site or asking the package maintainer(s) to expose this API."`,
         );
       });
 
@@ -511,9 +510,17 @@ describe('with package exports resolution enabled', () => {
             './features/bar/*.js': {
               'react-native': null,
             },
+            './node/*': './lib/node/*.js',
+            './*': './misc/*.js',
+            './node/*/types': './types/*/types.d.ts',
             './assets/*': './assets/*',
+            './repeated*/repeated': './repeated*/repeated.js',
+            './*/private': './src/forbidden.js',
+            './data.*': './data/*/data.*',
           },
         }),
+        '/root/node_modules/test-pkg/lib/node/test.js': '',
+        '/root/node_modules/test-pkg/lib/node/foo/public.js': '',
         '/root/node_modules/test-pkg/src/index.js': '',
         '/root/node_modules/test-pkg/src/features/foo.js': '',
         '/root/node_modules/test-pkg/src/features/foo.js.js': '',
@@ -521,7 +528,14 @@ describe('with package exports resolution enabled', () => {
         '/root/node_modules/test-pkg/src/features/baz.native.js': '',
         '/root/node_modules/test-pkg/src/features/node_modules/foo/index.js':
           '',
+        '/root/node_modules/test-pkg/src/forbidden.js': '',
+        '/root/node_modules/test-pkg/misc/repeated.js': '',
+        '/root/node_modules/test-pkg/repeated/repeated.js': '',
+        '/root/node_modules/test-pkg/repeated/repeated/repeated.js': '',
+        '/root/node_modules/test-pkg/types/foo/types.d.ts': '',
         '/root/node_modules/test-pkg/assets/Logo.js': '',
+        '/root/node_modules/test-pkg/data/json/data.json': '',
+        '/root/node_modules/test-pkg/data/csv/data.csv': '',
       }),
       originModulePath: '/root/src/main.js',
       unstable_enablePackageExports: true,
@@ -539,10 +553,6 @@ describe('with package exports resolution enabled', () => {
           'test-pkg/features/foo.js.js',
           '/root/node_modules/test-pkg/src/features/foo.js.js',
         ],
-        [
-          'test-pkg/features/bar/Bar.js',
-          '/root/node_modules/test-pkg/src/features/bar/Bar.js',
-        ],
       ]) {
         expect(Resolver.resolve(baseContext, importSpecifier, null)).toEqual({
           type: 'sourceFile',
@@ -558,7 +568,13 @@ describe('with package exports resolution enabled', () => {
       ).toThrowError();
     });
 
-    test('should use most specific pattern base', () => {
+    test('should use the most specific pattern base - implicit default condition', () => {
+      expect(() =>
+        Resolver.resolve(baseContext, 'test-pkg/features/bar/Bar.js', null),
+      ).toThrowError();
+    });
+
+    test('should use most specific pattern base - custom condition', () => {
       const context = {
         ...baseContext,
         unstable_conditionNames: ['react-native'],
@@ -574,6 +590,69 @@ describe('with package exports resolution enabled', () => {
           /node_modules
         "
       `);
+    });
+
+    test('should resolve prefixed wildcard export, using the most specific export path', () => {
+      const context = baseContext;
+
+      expect(Resolver.resolve(context, 'test-pkg/node/test', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/lib/node/test.js',
+      });
+    });
+
+    test('longer patterns have higher specificity if bases are equal', () => {
+      const context = baseContext;
+      expect(
+        Resolver.resolve(context, 'test-pkg/node/foo/public', null),
+      ).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/lib/node/foo/public.js',
+      });
+
+      expect(
+        Resolver.resolve(context, 'test-pkg/node/foo/types', null),
+      ).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/types/foo/types.d.ts',
+      });
+    });
+
+    test('patternBase and patternTrailer must match non-overlapping ends of matchKey', () => {
+      // ./repeated/repeated *should* match ./repeated*/repeated
+      expect(
+        Resolver.resolve(baseContext, 'test-pkg/repeated/repeated', null),
+      ).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/repeated/repeated.js',
+      });
+
+      // ./repeated should *not* match ./repeated*/repeated
+      expect(Resolver.resolve(baseContext, 'test-pkg/repeated', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/misc/repeated.js',
+      });
+    });
+
+    test('patterns can resolve to static targets', () => {
+      const context = baseContext;
+      expect(Resolver.resolve(context, 'test-pkg/foo/private', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/src/forbidden.js',
+      });
+    });
+
+    test('patterns can resolve to targets with multiple *', () => {
+      const context = baseContext;
+      expect(Resolver.resolve(context, 'test-pkg/data.json', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/data/json/data.json',
+      });
+
+      expect(Resolver.resolve(context, 'test-pkg/data.csv', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/data/csv/data.csv',
+      });
     });
 
     describe('package encapsulation', () => {
@@ -604,7 +683,6 @@ describe('with package exports resolution enabled', () => {
           main: 'index.js',
           exports: {
             './foo.js': {
-              import: './lib/foo-module.mjs',
               development: './lib/foo-dev.js',
               'react-native': {
                 import: './lib/foo-react-native.mjs',
@@ -612,6 +690,7 @@ describe('with package exports resolution enabled', () => {
                 default: './lib/foo-react-native.js',
               },
               browser: './lib/foo-browser.js',
+              import: './lib/foo-module.mjs',
               require: './lib/foo-require.cjs',
               default: './lib/foo.js',
             },
@@ -657,20 +736,64 @@ describe('with package exports resolution enabled', () => {
     });
 
     test('should resolve asserted conditions in order specified by package', () => {
-      const context = {
-        ...baseContext,
-        unstable_conditionNames: ['react-native', 'import'],
-      };
-
-      expect(Resolver.resolve(context, 'test-pkg/foo.js', null)).toEqual({
+      expect(
+        Resolver.resolve(
+          {
+            ...baseContext,
+            unstable_conditionNames: ['react-native', 'browser'],
+          },
+          'test-pkg/foo.js',
+          null,
+        ),
+      ).toEqual({
         type: 'sourceFile',
-        filePath: '/root/node_modules/test-pkg/lib/foo-module.mjs',
+        filePath: '/root/node_modules/test-pkg/lib/foo-react-native.cjs',
+      });
+
+      expect(
+        Resolver.resolve(
+          {
+            ...baseContext,
+            unstable_conditionNames: ['browser'],
+          },
+          'test-pkg/foo.js',
+          null,
+        ),
+      ).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/lib/foo-browser.js',
+      });
+
+      expect(
+        Resolver.resolve(
+          {
+            ...baseContext,
+            unstable_conditionNames: [],
+          },
+          'test-pkg/foo.js',
+          null,
+        ),
+      ).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/test-pkg/lib/foo-require.cjs',
       });
     });
 
     test('should fall back to "default" condition if present', () => {
       const context = {
         ...baseContext,
+        ...createPackageAccessors({
+          '/root/node_modules/test-pkg/package.json': {
+            main: 'index.js',
+            exports: {
+              './foo.js': {
+                import: './lib/foo-module.mjs',
+                default: './lib/foo.js',
+              },
+            },
+          },
+        }),
+        isESMImport: false,
         unstable_conditionNames: [],
       };
 
@@ -688,13 +811,14 @@ describe('with package exports resolution enabled', () => {
             main: 'index.js',
             exports: {
               './foo.js': {
+                // ESM-only package, but we'll require() it
                 import: './lib/foo-module.mjs',
-                require: './lib/foo-require.cjs',
                 // 'default' entry can be omitted
               },
             },
           },
         }),
+        isESMImport: false,
         unstable_conditionNames: [],
       };
 
@@ -719,10 +843,13 @@ describe('with package exports resolution enabled', () => {
           },
         };
 
+        // Null platform => no per-platform conditions asserted.
         expect(Resolver.resolve(context, 'test-pkg/foo.js', null)).toEqual({
           type: 'sourceFile',
-          filePath: '/root/node_modules/test-pkg/lib/foo.js',
+          filePath: '/root/node_modules/test-pkg/lib/foo-require.cjs',
         });
+
+        // 'web' platform => 'browser' condition is asserted.
         expect(Resolver.resolve(context, 'test-pkg/foo.js', 'web')).toEqual({
           type: 'sourceFile',
           filePath: '/root/node_modules/test-pkg/lib/foo-browser.js',
@@ -738,10 +865,13 @@ describe('with package exports resolution enabled', () => {
           },
         };
 
+        // Asserting 'development' condition prefers foo-dev.
         expect(Resolver.resolve(context, 'test-pkg/foo.js', 'web')).toEqual({
           type: 'sourceFile',
           filePath: '/root/node_modules/test-pkg/lib/foo-dev.js',
         });
+
+        // Without 'development' or 'browser', 'require' is the first match.
         expect(
           Resolver.resolve(
             {...context, unstable_conditionsByPlatform: {}},
@@ -750,7 +880,7 @@ describe('with package exports resolution enabled', () => {
           ),
         ).toEqual({
           type: 'sourceFile',
-          filePath: '/root/node_modules/test-pkg/lib/foo.js',
+          filePath: '/root/node_modules/test-pkg/lib/foo-require.cjs',
         });
       });
     });
@@ -781,7 +911,7 @@ describe('with package exports resolution enabled', () => {
               },
             },
           }),
-          unstable_conditionNames: ['browser', 'import', 'require'],
+          unstable_conditionNames: ['browser'],
         };
 
         expect(Resolver.resolve(context, 'test-pkg', null)).toEqual({
@@ -802,7 +932,7 @@ describe('with package exports resolution enabled', () => {
               },
             },
           }),
-          unstable_conditionNames: ['browser', 'import', 'require'],
+          unstable_conditionNames: ['browser'],
         };
 
         expect(Resolver.resolve(context, 'test-pkg', null)).toEqual({
@@ -822,13 +952,14 @@ describe('with package exports resolution enabled', () => {
               main: 'index.js',
               exports: {
                 './lib/foo.js': {
+                  // ESM-only package, but we'll require() it
                   import: './lib/foo-module.mjs',
-                  require: './lib/foo-require.cjs',
                   // 'default' entry can be omitted
                 },
               },
             },
           }),
+          isESMImport: false,
           unstable_conditionNames: [],
           unstable_logWarning: logWarning,
         };
@@ -1062,7 +1193,7 @@ describe('with package exports resolution enabled', () => {
             '',
         }),
         originModulePath: '/root/src/main.js',
-        unstable_conditionNames: ['require', 'import'],
+        unstable_conditionNames: [],
         unstable_enablePackageExports: true,
       };
 
@@ -1076,6 +1207,99 @@ describe('with package exports resolution enabled', () => {
         type: 'sourceFile',
         filePath:
           '/root/node_modules/@babel/runtime/helpers/interopRequireDefault.js',
+      });
+    });
+  });
+
+  describe('self-referencing imports (PACKAGE_SELF_RESOLVE)', () => {
+    const packageJson = {
+      name: 'self-pkg',
+      main: 'index-main.js',
+      exports: {
+        '.': './index.js',
+        './sub': './lib/sub.js',
+      },
+    };
+    const baseContext = {
+      ...createResolutionContext({
+        '/root/node_modules/self-pkg/package.json': JSON.stringify(packageJson),
+        '/root/node_modules/self-pkg/index.js': '',
+        '/root/node_modules/self-pkg/index-main.js': '',
+        '/root/node_modules/self-pkg/lib/sub.js': '',
+        '/root/node_modules/self-pkg/lib/internal.js': '',
+      }),
+      originModulePath: '/root/node_modules/self-pkg/index.js',
+      unstable_enablePackageExports: true,
+    };
+
+    test('should resolve own package name via its own "exports" field', () => {
+      expect(Resolver.resolve(baseContext, 'self-pkg', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/self-pkg/index.js',
+      });
+    });
+
+    test('should resolve a subpath of the own package via "exports"', () => {
+      expect(Resolver.resolve(baseContext, 'self-pkg/sub', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/self-pkg/lib/sub.js',
+      });
+    });
+
+    test('[nonstrict] should warn and fall back when self subpath is not in "exports"', () => {
+      const logWarning = jest.fn();
+      // `./lib/internal.js` is not exported, but exists on disk. We log the
+      // out-of-exports access and fall through to the regular hierarchical
+      // lookup, which finds the file inside `node_modules/self-pkg/`.
+      expect(
+        Resolver.resolve(
+          {...baseContext, unstable_logWarning: logWarning},
+          'self-pkg/lib/internal',
+          null,
+        ),
+      ).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/self-pkg/lib/internal.js',
+      });
+      expect(logWarning).toHaveBeenCalled();
+      expect(logWarning.mock.calls[0][0]).toMatch(
+        /which is not listed in the "exports"/,
+      );
+    });
+
+    test('should not self-resolve when origin package has no name', () => {
+      const noNameContext = {
+        ...baseContext,
+        ...createPackageAccessors({
+          '/root/node_modules/self-pkg/package.json': {
+            main: 'index-main.js',
+            exports: {'.': './index.js'},
+          },
+        }),
+      };
+      // With no `name`, falls through to hierarchical lookup (and finds the
+      // package in node_modules, going through "exports" as a normal import).
+      expect(Resolver.resolve(noNameContext, 'self-pkg', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/self-pkg/index.js',
+      });
+    });
+
+    test('should not self-resolve when the package has no "exports" field', () => {
+      const noExportsContext = {
+        ...baseContext,
+        ...createPackageAccessors({
+          '/root/node_modules/self-pkg/package.json': {
+            name: 'self-pkg',
+            main: 'index-main.js',
+          },
+        }),
+      };
+      // Without `exports`, self-resolve does not apply. Falls back to
+      // node_modules lookup, which resolves via "main".
+      expect(Resolver.resolve(noExportsContext, 'self-pkg', null)).toEqual({
+        type: 'sourceFile',
+        filePath: '/root/node_modules/self-pkg/index-main.js',
       });
     });
   });

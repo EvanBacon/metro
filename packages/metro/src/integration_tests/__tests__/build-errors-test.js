@@ -12,9 +12,8 @@
 'use strict';
 
 const Metro = require('../../..');
-const path = require('path');
+const path = require('node:path');
 
-jest.unmock('cosmiconfig');
 jest.setTimeout(30 * 1000);
 const BUILD_ERRORS_SRC_DIR =
   path.resolve(__dirname, '..', 'basic_bundle', 'build-errors') + path.sep;

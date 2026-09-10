@@ -4,55 +4,63 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @flow
+ * @flow strict-local
  * @format
  * @oncall react_native
  */
 
-'use strict';
-
+import type {AssetData} from './Assets';
 import type {ReadOnlyGraph} from './DeltaBundler';
 import type {ServerOptions} from './Server';
-import type {OutputOptions, RequestOptions} from './shared/types.flow.js';
+import type {BuildOptions, OutputOptions, RequestOptions} from './shared/types';
 import type {HandleFunction} from 'connect';
-import type {Server as HttpServer} from 'http';
-import type {Server as HttpsServer} from 'https';
+import type {TransformProfile} from 'metro-babel-transformer';
 import type {
   ConfigT,
   InputConfigT,
   MetroConfig,
   Middleware,
-} from 'metro-config/src/configTypes.flow';
+} from 'metro-config';
 import type {CustomResolverOptions} from 'metro-resolver';
 import type {CustomTransformOptions} from 'metro-transform-worker';
+import type {Server as HttpServer} from 'node:http';
+import type {
+  Server as HttpsServer,
+  ServerOptions as HttpsServerOptions,
+} from 'node:https';
+import type {Server as WebSocketServer} from 'ws';
 import typeof Yargs from 'yargs';
 
-const makeBuildCommand = require('./commands/build');
-const makeDependenciesCommand = require('./commands/dependencies');
-const makeServeCommand = require('./commands/serve');
-const MetroHmrServer = require('./HmrServer');
-const IncrementalBundler = require('./IncrementalBundler');
-const createWebsocketServer = require('./lib/createWebsocketServer');
-const TerminalReporter = require('./lib/TerminalReporter');
-const MetroServer = require('./Server');
-const outputBundle = require('./shared/output/bundle');
-const chalk = require('chalk');
-const fs = require('fs');
-const http = require('http');
-const https = require('https');
-const {
+import makeBuildCommand from './commands/build';
+import makeDependenciesCommand from './commands/dependencies';
+import makeServeCommand from './commands/serve';
+import MetroHmrServer from './HmrServer';
+import IncrementalBundler from './IncrementalBundler';
+import createWebsocketServer from './lib/createWebsocketServer';
+import getSchemeResolvers from './lib/getSchemeResolvers';
+import JsonReporter from './lib/JsonReporter';
+import TerminalReporter from './lib/TerminalReporter';
+import MetroServer from './Server';
+import * as outputBundle from './shared/output/bundle';
+import {
   getDefaultConfig,
   loadConfig,
   mergeConfig,
   resolveConfig,
-} = require('metro-config');
-const {Terminal} = require('metro-core');
-const net = require('net');
-const {parse} = require('url');
+} from 'metro-config';
+import {Terminal} from 'metro-core';
+import fs from 'node:fs';
+import http from 'node:http';
+import https from 'node:https';
+import net from 'node:net';
+import util from 'node:util';
+import nullthrows from 'nullthrows';
+
+const DEFAULTS = MetroServer.DEFAULT_BUNDLE_OPTIONS;
 
 type MetroMiddleWare = {
   attachHmrServer: (httpServer: HttpServer | HttpsServer) => void,
-  end: () => void,
+  end: () => Promise<void>,
   metroServer: MetroServer,
   middleware: Middleware,
 };
@@ -62,25 +70,30 @@ export type RunMetroOptions = {
   waitForBundler?: boolean,
 };
 
-export type RunServerOptions = $ReadOnly<{
+export type RunServerOptions = Readonly<{
   hasReducedPerformance?: boolean,
   host?: string,
-  onError?: (Error & {code?: string}) => void,
+  onError?: (err: Error & {code?: string}) => void,
   onReady?: (server: HttpServer | HttpsServer) => void,
-  secureServerOptions?: Object,
+  onClose?: () => void,
+  secureServerOptions?: HttpsServerOptions,
   secure?: boolean, // deprecated
   secureCert?: string, // deprecated
   secureKey?: string, // deprecated
-  unstable_extraMiddleware?: $ReadOnlyArray<HandleFunction>,
+  unstable_extraMiddleware?: ReadonlyArray<HandleFunction>,
   waitForBundler?: boolean,
   watch?: boolean,
-  websocketEndpoints?: $ReadOnly<{
-    [path: string]: ws$WebSocketServer,
+  websocketEndpoints?: Readonly<{
+    [path: string]: WebSocketServer,
   }>,
 }>;
 
+export type RunServerResult = {
+  httpServer: HttpServer | HttpsServer,
+};
+
 type BuildGraphOptions = {
-  entries: $ReadOnlyArray<string>,
+  entries: ReadonlyArray<string>,
   customTransformOptions?: CustomTransformOptions,
   dev?: boolean,
   minify?: boolean,
@@ -91,55 +104,88 @@ type BuildGraphOptions = {
 
 export type RunBuildOptions = {
   entry: string,
+  assets?: boolean,
   dev?: boolean,
   out?: string,
+  bundleOut?: string,
+  sourceMapOut?: string,
   onBegin?: () => void,
   onComplete?: () => void,
   onProgress?: (transformedFileCount: number, totalFileCount: number) => void,
   minify?: boolean,
-  output?: {
+  output?: Readonly<{
     build: (
-      MetroServer,
-      RequestOptions,
+      server: MetroServer,
+      requestOptions: RequestOptions,
+      buildOptions?: BuildOptions,
     ) => Promise<{
       code: string,
       map: string,
+      assets?: ReadonlyArray<AssetData>,
       ...
     }>,
     save: (
-      {
+      output: {
         code: string,
         map: string,
         ...
       },
-      OutputOptions,
-      (...args: Array<string>) => void,
-    ) => Promise<mixed>,
+      opts: OutputOptions,
+      logger: (logMessage: string) => void,
+    ) => Promise<unknown>,
     ...
-  },
+  }>,
   platform?: string,
   sourceMap?: boolean,
   sourceMapUrl?: string,
   customResolverOptions?: CustomResolverOptions,
   customTransformOptions?: CustomTransformOptions,
+  unstable_transformProfile?: TransformProfile,
 };
 
-type BuildCommandOptions = {} | null;
-type ServeCommandOptions = {} | null;
+export type RunBuildResult = {
+  code: string,
+  map: string,
+  assets?: ReadonlyArray<AssetData>,
+  ...
+};
 
-exports.Terminal = Terminal;
-exports.TerminalReporter = TerminalReporter;
+type BuildCommandOptions = Readonly<{[string]: unknown}> | null;
+type ServeCommandOptions = Readonly<{[string]: unknown}> | null;
+type DependenciesCommandOptions = Readonly<{[string]: unknown}> | null;
 
-export type {MetroConfig};
+export {Terminal, JsonReporter, TerminalReporter, getSchemeResolvers};
+
+export type {AssetData} from './Assets';
+export type {
+  AsyncDependencyType,
+  DeltaResult,
+  Dependency,
+  MixedOutput,
+  Module,
+  ReadOnlyDependencies,
+  ReadOnlyGraph,
+  SerializerOptions,
+  TransformInputOptions,
+  TransformResult,
+  TransformResultDependency,
+} from './DeltaBundler/types';
+export type {default as DependencyGraph} from './node-haste/DependencyGraph';
+export type {BundleDetails, Reporter, ReportableEvent} from './lib/reporting';
+export type {TerminalReportableEvent} from './lib/TerminalReporter';
+export type {
+  ContextMode,
+  RequireContextParams,
+} from './ModuleGraph/worker/collectDependencies';
+export type {ServerOptions} from './Server';
+export type {MetroConfig, MetroServer};
 
 async function getConfig(config: InputConfigT): Promise<ConfigT> {
   const defaultConfig = await getDefaultConfig(config.projectRoot);
-  // $FlowFixMe[incompatible-variance]
-  // $FlowFixMe[incompatible-call]
   return mergeConfig(defaultConfig, config);
 }
 
-async function runMetro(
+export async function runMetro(
   config: InputConfigT,
   options?: RunMetroOptions,
 ): Promise<MetroServer> {
@@ -182,17 +228,12 @@ async function runMetro(
   return server;
 }
 
-exports.runMetro = runMetro;
-exports.loadConfig = loadConfig;
-exports.mergeConfig = mergeConfig;
-exports.resolveConfig = resolveConfig;
+export {loadConfig, mergeConfig, resolveConfig};
 
-const createConnectMiddleware = async function (
+export const createConnectMiddleware = async function (
   config: ConfigT,
   options?: RunMetroOptions,
 ): Promise<MetroMiddleWare> {
-  // $FlowFixMe[incompatible-variance]
-  // $FlowFixMe[incompatible-call]
   const metroServer = await runMetro(config, options);
 
   let enhancedMiddleware: Middleware = metroServer.processRequest;
@@ -215,7 +256,7 @@ const createConnectMiddleware = async function (
         ),
       });
       httpServer.on('upgrade', (request, socket, head) => {
-        const {pathname} = parse(request.url);
+        const {pathname} = new URL(request.url, 'resolve://');
         if (pathname === '/hot') {
           wss.handleUpgrade(request, socket, head, ws => {
             wss.emit('connection', ws, request);
@@ -227,47 +268,53 @@ const createConnectMiddleware = async function (
     },
     metroServer,
     middleware: enhancedMiddleware,
-    end(): void {
-      metroServer.end();
+    async end(): Promise<void> {
+      await metroServer.end();
     },
   };
 };
-exports.createConnectMiddleware = createConnectMiddleware;
 
-exports.runServer = async (
+export const runServer = async (
   config: ConfigT,
-  {
+  opts: RunServerOptions = {},
+): Promise<RunServerResult> => {
+  const {
     hasReducedPerformance = false,
     host,
     onError,
     onReady,
+    onClose,
     secureServerOptions,
     secure, //deprecated
     secureCert, // deprecated
     secureKey, // deprecated
     unstable_extraMiddleware,
     waitForBundler = false,
-    websocketEndpoints = {},
+    websocketEndpoints: userWebsocketEndpoints = {},
     watch,
-  }: RunServerOptions = {},
-): Promise<HttpServer | HttpsServer> => {
+  } = opts;
   await earlyPortCheck(host, config.server.port);
 
   if (secure != null || secureCert != null || secureKey != null) {
     // eslint-disable-next-line no-console
     console.warn(
-      chalk.inverse.yellow.bold(' DEPRECATED '),
+      util.styleText(['inverse', 'yellow', 'bold'], ' DEPRECATED '),
       'The `secure`, `secureCert`, and `secureKey` options are now deprecated. ' +
         'Please use the `secureServerOptions` object instead to pass options to ' +
-        "Metro's https development server.",
+        "Metro's https development server, or `config.server.tls` in Metro's configuration",
     );
   }
   // Lazy require
+  // eslint-disable-next-line import/no-commonjs
   const connect = require('connect');
 
   const serverApp = connect();
 
-  const {middleware, end, metroServer} = await createConnectMiddleware(config, {
+  const {
+    middleware,
+    end: endMiddleware,
+    metroServer,
+  } = await createConnectMiddleware(config, {
     hasReducedPerformance,
     waitForBundler,
     watch,
@@ -281,85 +328,107 @@ exports.runServer = async (
 
   let httpServer;
 
-  if (secure || secureServerOptions != null) {
-    let options = secureServerOptions;
-    if (typeof secureKey === 'string' && typeof secureCert === 'string') {
-      options = {
-        key: fs.readFileSync(secureKey),
-        cert: fs.readFileSync(secureCert),
-        ...secureServerOptions,
-      };
-    }
-    // $FlowFixMe[incompatible-call] 'http' and 'https' Flow types do not match
+  const {tls} = config.server;
+  if (
+    secure === true ||
+    secureServerOptions != null ||
+    typeof tls === 'object'
+  ) {
+    const options = {
+      key:
+        typeof tls === 'object'
+          ? tls.key
+          : typeof secureKey === 'string'
+            ? fs.readFileSync(secureKey)
+            : undefined,
+      cert:
+        typeof tls === 'object'
+          ? tls.cert
+          : typeof secureCert === 'string'
+            ? fs.readFileSync(secureCert)
+            : undefined,
+      ca: typeof tls === 'object' ? tls.ca : undefined,
+      requestCert: typeof tls === 'object' ? tls.requestCert : undefined,
+      ...(secureServerOptions ?? {}),
+    };
+
+    // $FlowFixMe[incompatible-type] 'http' and 'https' Flow types do not match
     httpServer = https.createServer(options, serverApp);
   } else {
     httpServer = http.createServer(serverApp);
   }
-  return new Promise(
-    (
-      resolve: (result: HttpServer | HttpsServer) => void,
-      reject: mixed => mixed,
-    ) => {
-      httpServer.on('error', error => {
-        if (onError) {
-          onError(error);
-        }
+  return new Promise((resolve, reject) => {
+    httpServer.on('error', error => {
+      endMiddleware().finally(() => {
+        onError?.(error);
         reject(error);
-        end();
+      });
+    });
+
+    httpServer.listen(config.server.port, host, () => {
+      const {address, port, family} = httpServer.address();
+      config.reporter.update({
+        type: 'server_listening',
+        address,
+        port, // Assigned port if configured with port 0
+        family,
       });
 
-      httpServer.listen(config.server.port, host, () => {
-        if (onReady) {
-          onReady(httpServer);
+      const websocketEndpoints = {
+        ...userWebsocketEndpoints,
+        '/hot': createWebsocketServer({
+          websocketServer: new MetroHmrServer(
+            metroServer.getBundler(),
+            metroServer.getCreateModuleId(),
+            config,
+          ),
+        }),
+      };
+
+      httpServer.on('upgrade', (request, socket, head) => {
+        const {pathname} = new URL(request.url, 'resolve://');
+        if (pathname != null && websocketEndpoints[pathname]) {
+          websocketEndpoints[pathname].handleUpgrade(
+            request,
+            socket,
+            head,
+            ws => {
+              websocketEndpoints[pathname].emit('connection', ws, request);
+            },
+          );
+        } else {
+          socket.destroy();
         }
-
-        websocketEndpoints = {
-          ...websocketEndpoints,
-          '/hot': createWebsocketServer({
-            websocketServer: new MetroHmrServer(
-              metroServer.getBundler(),
-              metroServer.getCreateModuleId(),
-              config,
-            ),
-          }),
-        };
-
-        httpServer.on('upgrade', (request, socket, head) => {
-          const {pathname} = parse(request.url);
-          if (pathname != null && websocketEndpoints[pathname]) {
-            websocketEndpoints[pathname].handleUpgrade(
-              request,
-              socket,
-              head,
-              ws => {
-                websocketEndpoints[pathname].emit('connection', ws, request);
-              },
-            );
-          } else {
-            socket.destroy();
-          }
-        });
-
-        resolve(httpServer);
       });
 
-      // Disable any kind of automatic timeout behavior for incoming
-      // requests in case it takes the packager more than the default
-      // timeout of 120 seconds to respond to a request.
-      httpServer.timeout = 0;
+      if (onReady) {
+        onReady(httpServer);
+      }
 
-      httpServer.on('close', () => {
-        end();
+      resolve({httpServer});
+    });
+
+    // Disable any kind of automatic timeout behavior for incoming
+    // requests in case it takes the packager more than the default
+    // timeout of 120 seconds to respond to a request.
+    httpServer.timeout = 0;
+
+    httpServer.on('close', () => {
+      endMiddleware()?.finally(() => {
+        onClose?.();
       });
-    },
-  );
+    });
+  });
 };
 
-exports.runBuild = async (
+export const runBuild = async (
   config: ConfigT,
-  {
-    customResolverOptions,
-    customTransformOptions,
+  opts: RunBuildOptions,
+): Promise<RunBuildResult> => {
+  const {
+    assets = false,
+    customResolverOptions = DEFAULTS.customResolverOptions,
+    customTransformOptions = DEFAULTS.customTransformOptions,
     dev = false,
     entry,
     onBegin,
@@ -368,49 +437,60 @@ exports.runBuild = async (
     minify = true,
     output = outputBundle,
     out,
+    bundleOut,
+    sourceMapOut,
     platform = 'web',
     sourceMap = false,
     sourceMapUrl,
-  }: RunBuildOptions,
-): Promise<{
-  code: string,
-  map: string,
-  ...
-}> => {
-  // $FlowFixMe[incompatible-variance]
-  // $FlowFixMe[incompatible-call]
+    unstable_transformProfile = DEFAULTS.unstable_transformProfile,
+  } = opts;
   const metroServer = await runMetro(config, {
     watch: false,
   });
 
   try {
-    const requestOptions: RequestOptions = {
+    const requestOptions = {
       dev,
       entryFile: entry,
       inlineSourceMap: sourceMap && !sourceMapUrl,
       minify,
       platform,
-      sourceMapUrl: sourceMap === false ? undefined : sourceMapUrl,
+      ...(sourceMap === false ? {} : {sourceMapUrl}),
       createModuleIdFactory: config.serializer.createModuleIdFactory,
       onProgress,
       customResolverOptions,
       customTransformOptions,
+      unstable_transformProfile,
     };
 
     if (onBegin) {
       onBegin();
     }
 
-    const metroBundle = await output.build(metroServer, requestOptions);
+    const metroBundle = await output.build(metroServer, requestOptions, {
+      withAssets: assets,
+    });
+    const result: RunBuildResult = {...metroBundle};
+
+    if (assets && result.assets == null) {
+      result.assets = await metroServer.getAssets({
+        ...MetroServer.DEFAULT_BUNDLE_OPTIONS,
+        ...requestOptions,
+      });
+    }
 
     if (onComplete) {
       onComplete();
     }
 
-    if (out) {
-      const bundleOutput = out.replace(/(\.js)?$/, '.js');
+    if (out != null || bundleOut != null) {
+      const bundleOutput =
+        bundleOut ?? nullthrows(out).replace(/(\.js)?$/, '.js');
+
       const sourcemapOutput =
-        sourceMap === false ? undefined : out.replace(/(\.js)?$/, '.map');
+        sourceMap === false
+          ? undefined
+          : (sourceMapOut ?? out?.replace(/(\.js)?$/, '.map'));
 
       const outputOptions: OutputOptions = {
         bundleOutput,
@@ -419,28 +499,32 @@ exports.runBuild = async (
         platform,
       };
 
-      // eslint-disable-next-line no-console
-      await output.save(metroBundle, outputOptions, console.log);
+      await output.save(metroBundle, outputOptions, message =>
+        config.reporter.update({
+          type: 'bundle_save_log',
+          message,
+        }),
+      );
     }
 
-    return metroBundle;
+    return result;
   } finally {
     await metroServer.end();
   }
 };
 
-exports.buildGraph = async function (
+export const buildGraph = async function (
   config: InputConfigT,
-  {
+  opts: BuildGraphOptions,
+): Promise<ReadOnlyGraph<>> {
+  const {
     customTransformOptions = Object.create(null),
     dev = false,
     entries,
     minify = false,
-    onProgress,
     platform = 'web',
     type = 'module',
-  }: BuildGraphOptions,
-): Promise<ReadOnlyGraph<>> {
+  } = opts;
   const mergedConfig = await getConfig(config);
 
   const bundler = new IncrementalBundler(mergedConfig);
@@ -461,18 +545,18 @@ exports.buildGraph = async function (
       {customResolverOptions, dev},
     );
   } finally {
-    bundler.end();
+    await bundler.end();
   }
 };
 
 type AttachMetroCLIOptions = {
   build?: BuildCommandOptions,
   serve?: ServeCommandOptions,
-  dependencies?: any,
+  dependencies?: DependenciesCommandOptions,
   ...
 };
 
-exports.attachMetroCli = function (
+export const attachMetroCli = function (
   yargs: Yargs,
   options?: AttachMetroCLIOptions = {},
 ): Yargs {

@@ -10,8 +10,8 @@
 
 'use strict';
 
-const getDefaultConfig = require('metro-config/src/defaults');
-const {Readable} = require('stream');
+const {getDefaultConfig} = require('metro-config');
+const {Readable} = require('node:stream');
 
 describe('Worker Farm', function () {
   let api;
@@ -23,10 +23,10 @@ describe('Worker Farm', function () {
   beforeEach(async function () {
     jest
       .resetModules()
-      .mock('fs', () => ({writeFileSync: jest.fn()}))
+      .mock('node:fs', () => ({writeFileSync: jest.fn()}))
       .mock('jest-worker', () => ({__esModule: true, Worker: jest.fn()}));
 
-    const fs = require('fs');
+    const fs = jest.requireMock('node:fs');
     const jestWorker = require('jest-worker');
     config = await getDefaultConfig();
 
@@ -55,10 +55,10 @@ describe('Worker Farm', function () {
       return api;
     });
 
-    WorkerFarm = require('../WorkerFarm');
+    WorkerFarm = require('../WorkerFarm').default;
   });
 
-  it('passes transform data to the worker farm when transforming', async () => {
+  test('passes transform data to the worker farm when transforming', async () => {
     const transformOptions = {arbitrary: 'options'};
     const transformerConfig = {
       transformerPath: config.transformerPath,
@@ -79,7 +79,7 @@ describe('Worker Farm', function () {
     );
   });
 
-  it('Passes the correct config to separate farm instances', async () => {
+  test('Passes the correct config to separate farm instances', async () => {
     const transformerConfig = {
       transformerPath: config.transformerPath,
       transformerConfig: config.transformer,
@@ -116,7 +116,7 @@ describe('Worker Farm', function () {
     );
   });
 
-  it('should add file info to parse errors', () => {
+  test('should add file info to parse errors', () => {
     const workerFarm = new WorkerFarm(config, {
       transformerPath: config.transformerPath,
       transformerConfig: config.transformer,

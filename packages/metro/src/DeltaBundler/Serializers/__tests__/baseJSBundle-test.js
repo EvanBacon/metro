@@ -9,15 +9,13 @@
  * @oncall react_native
  */
 
-'use strict';
-
-import type {Module, TransformInputOptions} from '../../types.flow';
+import type {Module, TransformInputOptions} from '../../types';
 
 import CountingSet from '../../../lib/CountingSet';
+import baseJSBundle from '../baseJSBundle';
+import createModuleIdFactory from 'metro-config/private/defaults/createModuleIdFactory';
 
-const createModuleIdFactory = require('../../../lib/createModuleIdFactory');
-const baseJSBundle = require('../baseJSBundle');
-const path = require('path');
+const path = require('node:path');
 
 const {objectContaining} = expect;
 
@@ -41,7 +39,10 @@ const fooModule: Module<> = {
       './bar',
       {
         absolutePath: '/root/bar',
-        data: {data: {asyncType: null, locs: [], key: './bar'}, name: './bar'},
+        data: {
+          data: {asyncType: null, isESMImport: false, locs: [], key: './bar'},
+          name: './bar',
+        },
       },
     ],
   ]),
@@ -76,20 +77,42 @@ const barModule: Module<> = {
   getSource: () => Buffer.from('bar-source'),
 };
 
-const getRunModuleStatement = (moduleId: number | string) =>
-  `require(${JSON.stringify(moduleId)});`;
+const nonAsciiModule: Module<> = {
+  path: '/root/%30.бундл.Øಚ😁AA/src/?/foo=bar/#.js',
+  dependencies: new Map(),
+  inverseDependencies: new CountingSet(),
+  output: [
+    {
+      type: 'js/module',
+      data: {
+        code: '__d(function() {/* code for ascii file with non ascii characters: %30.бундл.Øಚ😁AA */});',
+        map: [],
+        lineCount: 1,
+      },
+    },
+  ],
+  getSource: () => Buffer.from('bar-source'),
+};
+
+const getRunModuleStatement = jest.fn(
+  (moduleId: number | string, globalPrefix: string) =>
+    `require(${JSON.stringify(moduleId)});`,
+);
 
 const transformOptions: TransformInputOptions = {
   customTransformOptions: {},
   dev: true,
-  hot: true,
   minify: true,
   platform: 'web',
   type: 'module',
   unstable_transformProfile: 'default',
 };
 
-it('should generate a very simple bundle', () => {
+beforeEach(() => {
+  jest.clearAllMocks();
+});
+
+test('should generate a very simple bundle', () => {
   expect(
     baseJSBundle(
       '/root/foo',
@@ -104,10 +127,11 @@ it('should generate a very simple bundle', () => {
       },
       {
         asyncRequireModulePath: '',
-        // $FlowFixMe[incompatible-call] createModuleId assumes numeric IDs - is this too strict?
+        // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
         createModuleId: filePath => path.basename(filePath),
         dev: true,
         getRunModuleStatement,
+        globalPrefix: 'customPrefix',
         includeAsyncPaths: false,
         inlineSourceMap: false,
         modulesOnly: false,
@@ -119,6 +143,7 @@ it('should generate a very simple bundle', () => {
         shouldAddToIgnoreList: () => false,
         sourceMapUrl: 'http://localhost/bundle.map',
         sourceUrl: null,
+        getSourceUrl: null,
       },
     ),
   ).toMatchInlineSnapshot(`
@@ -130,7 +155,7 @@ it('should generate a very simple bundle', () => {
         ],
         Array [
           "bar",
-          "__d(function() {/* code for bar */},\\"bar\\",[],\\"bar\\");",
+          "__d(function() {/* code for bar */},\\"bar\\",null,\\"bar\\");",
         ],
       ],
       "post": "require(\\"foo\\");
@@ -138,9 +163,69 @@ it('should generate a very simple bundle', () => {
       "pre": "__d(function() {/* code for polyfill */});",
     }
   `);
+
+  expect(getRunModuleStatement).toHaveBeenCalledWith('foo', 'customPrefix');
 });
 
-it('should add runBeforeMainModule statements if found in the graph', () => {
+test('should generate a bundle with correct non ascii characters parsing', () => {
+  expect(
+    baseJSBundle(
+      '/root/',
+      [polyfill],
+      {
+        dependencies: new Map([
+          ['/root/%30.бундл.Øಚ😁AA/src/?/foo=bar/#.js', nonAsciiModule],
+        ]),
+        entryPoints: new Set(['/root/%30.бундл.Øಚ😁AA/src/?/foo=bar/#.js']),
+        transformOptions,
+      },
+      {
+        asyncRequireModulePath: '',
+        // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
+        createModuleId: filePath => path.basename(filePath),
+        dev: true,
+        getRunModuleStatement,
+        globalPrefix: '',
+        includeAsyncPaths: false,
+        inlineSourceMap: false,
+        modulesOnly: false,
+        processModuleFilter: () => true,
+        projectRoot: '/root',
+        runBeforeMainModule: [],
+        runModule: true,
+        serverRoot: '/root',
+        shouldAddToIgnoreList: () => false,
+        sourceMapUrl:
+          'http://localhost/' +
+          'root/%30.бундл.Øಚ😁AA/src/?/foo=bar/#.map'
+            .split('/')
+            .map(segment => encodeURIComponent(segment))
+            .join('/'),
+        sourceUrl:
+          'http://localhost/' +
+          'root/%30.бундл.Øಚ😁AA/src/?/foo=bar/#.bundle'
+            .split('/')
+            .map(segment => encodeURIComponent(segment))
+            .join('/'),
+        getSourceUrl: null,
+      },
+    ),
+  ).toMatchInlineSnapshot(`
+Object {
+  "modules": Array [
+    Array [
+      "#.js",
+      "__d(function() {/* code for ascii file with non ascii characters: %30.бундл.Øಚ😁AA */},\\"#.js\\",null,\\"%30.бундл.Øಚ😁AA/src/?/foo=bar/#.js\\");",
+    ],
+  ],
+  "post": "//# sourceMappingURL=http://localhost/root/%2530.%D0%B1%D1%83%D0%BD%D0%B4%D0%BB.%C3%98%E0%B2%9A%F0%9F%98%81AA/src/%3F/foo%3Dbar/%23.map
+//# sourceURL=http://localhost/root/%2530.%D0%B1%D1%83%D0%BD%D0%B4%D0%BB.%C3%98%E0%B2%9A%F0%9F%98%81AA/src/%3F/foo%3Dbar/%23.bundle",
+  "pre": "__d(function() {/* code for polyfill */});",
+}
+`);
+});
+
+test('should add runBeforeMainModule statements if found in the graph', () => {
   expect(
     baseJSBundle(
       '/root/foo',
@@ -155,10 +240,11 @@ it('should add runBeforeMainModule statements if found in the graph', () => {
       },
       {
         asyncRequireModulePath: '',
-        // $FlowFixMe[incompatible-call] createModuleId assumes numeric IDs - is this too strict?
+        // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
         createModuleId: filePath => path.basename(filePath),
         dev: true,
         getRunModuleStatement,
+        globalPrefix: '',
         includeAsyncPaths: false,
         inlineSourceMap: false,
         modulesOnly: false,
@@ -170,6 +256,7 @@ it('should add runBeforeMainModule statements if found in the graph', () => {
         shouldAddToIgnoreList: () => false,
         sourceMapUrl: 'http://localhost/bundle.map',
         sourceUrl: null,
+        getSourceUrl: null,
       },
     ).post,
   ).toMatchInlineSnapshot(`
@@ -179,7 +266,7 @@ it('should add runBeforeMainModule statements if found in the graph', () => {
   `);
 });
 
-it('should handle numeric module ids', () => {
+test('should handle numeric module ids', () => {
   expect(
     baseJSBundle(
       '/root/foo',
@@ -197,6 +284,7 @@ it('should handle numeric module ids', () => {
         createModuleId: createModuleIdFactory(),
         dev: true,
         getRunModuleStatement,
+        globalPrefix: '',
         includeAsyncPaths: false,
         inlineSourceMap: false,
         modulesOnly: false,
@@ -208,6 +296,7 @@ it('should handle numeric module ids', () => {
         shouldAddToIgnoreList: () => false,
         sourceMapUrl: 'http://localhost/bundle.map',
         sourceUrl: null,
+        getSourceUrl: null,
       },
     ).modules,
   ).toMatchInlineSnapshot(`
@@ -218,13 +307,13 @@ it('should handle numeric module ids', () => {
       ],
       Array [
         1,
-        "__d(function() {/* code for bar */},1,[],\\"bar\\");",
+        "__d(function() {/* code for bar */},1,null,\\"bar\\");",
       ],
     ]
   `);
 });
 
-it('outputs custom runModule statements', () => {
+test('outputs custom runModule statements', () => {
   expect(
     baseJSBundle(
       '/root/foo',
@@ -239,11 +328,12 @@ it('outputs custom runModule statements', () => {
       },
       {
         asyncRequireModulePath: '',
-        // $FlowFixMe[incompatible-call] createModuleId assumes numeric IDs - is this too strict?
+        // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
         createModuleId: filePath => path.basename(filePath),
         dev: true,
         getRunModuleStatement: moduleId =>
           `export default require(${JSON.stringify(moduleId)}).default;`,
+        globalPrefix: '',
         includeAsyncPaths: false,
         inlineSourceMap: false,
         modulesOnly: false,
@@ -255,6 +345,7 @@ it('outputs custom runModule statements', () => {
         shouldAddToIgnoreList: () => false,
         sourceMapUrl: null,
         sourceUrl: null,
+        getSourceUrl: null,
       },
     ).post,
   ).toMatchInlineSnapshot(`
@@ -263,7 +354,7 @@ it('outputs custom runModule statements', () => {
   `);
 });
 
-it('should add an inline source map to a very simple bundle', () => {
+test('should add an inline source map to a very simple bundle', () => {
   const bundle = baseJSBundle(
     '/root/foo',
     [polyfill],
@@ -277,10 +368,11 @@ it('should add an inline source map to a very simple bundle', () => {
     },
     {
       asyncRequireModulePath: '',
-      // $FlowFixMe[incompatible-call] createModuleId assumes numeric IDs - is this too strict?
+      // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
       createModuleId: filePath => path.basename(filePath),
       dev: true,
       getRunModuleStatement,
+      globalPrefix: '',
       includeAsyncPaths: false,
       inlineSourceMap: true,
       modulesOnly: false,
@@ -292,6 +384,7 @@ it('should add an inline source map to a very simple bundle', () => {
       shouldAddToIgnoreList: () => false,
       sourceMapUrl: null,
       sourceUrl: null,
+      getSourceUrl: null,
     },
   );
   expect(bundle.post.slice(0, bundle.post.lastIndexOf('base64'))).toEqual(
@@ -305,15 +398,33 @@ it('should add an inline source map to a very simple bundle', () => {
       ).toString(),
     ),
   ).toEqual({
-    mappings: '',
-    names: [],
-    sources: ['/root/foo', '/root/bar'],
-    sourcesContent: ['foo-source', 'bar-source'],
     version: 3,
+    sections: [
+      {
+        offset: {line: 1, column: 0},
+        map: {
+          version: 3,
+          sources: ['/root/foo'],
+          sourcesContent: ['foo-source'],
+          names: [],
+          mappings: '',
+        },
+      },
+      {
+        offset: {line: 2, column: 0},
+        map: {
+          version: 3,
+          sources: ['/root/bar'],
+          sourcesContent: ['bar-source'],
+          names: [],
+          mappings: '',
+        },
+      },
+    ],
   });
 });
 
-it('emits x_google_ignoreList based on shouldAddToIgnoreList', () => {
+test('emits x_google_ignoreList based on shouldAddToIgnoreList', () => {
   const bundle = baseJSBundle(
     '/root/foo',
     [polyfill],
@@ -327,10 +438,11 @@ it('emits x_google_ignoreList based on shouldAddToIgnoreList', () => {
     },
     {
       asyncRequireModulePath: '',
-      // $FlowFixMe[incompatible-call] createModuleId assumes numeric IDs - is this too strict?
+      // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
       createModuleId: filePath => path.basename(filePath),
       dev: true,
       getRunModuleStatement,
+      globalPrefix: '',
       includeAsyncPaths: false,
       inlineSourceMap: true,
       modulesOnly: false,
@@ -342,6 +454,7 @@ it('emits x_google_ignoreList based on shouldAddToIgnoreList', () => {
       shouldAddToIgnoreList: () => true,
       sourceMapUrl: null,
       sourceUrl: null,
+      getSourceUrl: null,
     },
   );
   expect(bundle.post.slice(0, bundle.post.lastIndexOf('base64'))).toEqual(
@@ -356,13 +469,35 @@ it('emits x_google_ignoreList based on shouldAddToIgnoreList', () => {
     ),
   ).toEqual(
     objectContaining({
-      sources: ['/root/foo', '/root/bar'],
-      x_google_ignoreList: [0, 1],
+      sections: [
+        {
+          offset: {line: 1, column: 0},
+          map: {
+            version: 3,
+            sources: ['/root/foo'],
+            sourcesContent: ['foo-source'],
+            names: [],
+            mappings: '',
+            x_google_ignoreList: [0],
+          },
+        },
+        {
+          offset: {line: 2, column: 0},
+          map: {
+            version: 3,
+            sources: ['/root/bar'],
+            sourcesContent: ['bar-source'],
+            names: [],
+            mappings: '',
+            x_google_ignoreList: [0],
+          },
+        },
+      ],
     }),
   );
 });
 
-it('does not add polyfills when `modulesOnly` is used', () => {
+test('does not add polyfills when `modulesOnly` is used', () => {
   expect(
     baseJSBundle(
       '/root/foo',
@@ -377,10 +512,11 @@ it('does not add polyfills when `modulesOnly` is used', () => {
       },
       {
         asyncRequireModulePath: '',
-        // $FlowFixMe[incompatible-call] createModuleId assumes numeric IDs - is this too strict?
+        // $FlowFixMe[incompatible-type] createModuleId assumes numeric IDs - is this too strict?
         createModuleId: filePath => path.basename(filePath),
         dev: true,
         getRunModuleStatement,
+        globalPrefix: '',
         includeAsyncPaths: false,
         inlineSourceMap: false,
         modulesOnly: true,
@@ -392,6 +528,7 @@ it('does not add polyfills when `modulesOnly` is used', () => {
         shouldAddToIgnoreList: () => false,
         sourceMapUrl: 'http://localhost/bundle.map',
         sourceUrl: null,
+        getSourceUrl: null,
       },
     ),
   ).toMatchInlineSnapshot(`
@@ -403,7 +540,7 @@ it('does not add polyfills when `modulesOnly` is used', () => {
         ],
         Array [
           "bar",
-          "__d(function() {/* code for bar */},\\"bar\\",[],\\"bar\\");",
+          "__d(function() {/* code for bar */},\\"bar\\",null,\\"bar\\");",
         ],
       ],
       "post": "require(\\"foo\\");
@@ -411,4 +548,64 @@ it('does not add polyfills when `modulesOnly` is used', () => {
       "pre": "",
     }
   `);
+});
+
+test('inlines module ids when unstable_inlineDependencyMap is set', () => {
+  const NAME = 'DEP_MAP_RESERVED';
+  const ref = `${NAME}[0]`;
+  const fooWithRefs: Module<> = {
+    ...fooModule,
+    output: [
+      {
+        type: 'js/module',
+        data: {
+          code: `__d(function(g,r,i,a,m,e,${NAME}){r(${ref})});`,
+          map: [],
+          lineCount: 1,
+        },
+      },
+    ],
+  };
+
+  const bundle = baseJSBundle(
+    '/root/foo',
+    [polyfill],
+    {
+      dependencies: new Map([
+        ['/root/foo', fooWithRefs],
+        ['/root/bar', barModule],
+      ]),
+      entryPoints: new Set(['/root/foo']),
+      transformOptions,
+    },
+    {
+      asyncRequireModulePath: '',
+      createModuleId: createModuleIdFactory(),
+      dev: false,
+      getRunModuleStatement,
+      globalPrefix: '',
+      includeAsyncPaths: false,
+      inlineSourceMap: false,
+      modulesOnly: false,
+      processModuleFilter: () => true,
+      projectRoot: '/root',
+      runBeforeMainModule: [],
+      runModule: true,
+      serverRoot: '/root',
+      shouldAddToIgnoreList: () => false,
+      sourceMapUrl: null,
+      sourceUrl: null,
+      getSourceUrl: null,
+      dependencyMapReservedName: NAME,
+      unstable_inlineDependencyMap: true,
+    },
+  );
+
+  // baseJSBundle pre-assigns sequential ids in graph order: foo=0, bar=1.
+  // foo's DEP_MAP_RESERVED[0] resolves to its first dependency (bar => 1),
+  // inlined and right-padded; the dependency-map array is dropped.
+  expect(bundle.modules).toEqual([
+    [0, `__d(function(g,r,i,a,m,e,${NAME}){r(${'1'.padEnd(ref.length)})},0);`],
+    [1, '__d(function() {/* code for bar */},1);'],
+  ]);
 });

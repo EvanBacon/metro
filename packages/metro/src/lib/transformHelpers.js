@@ -9,41 +9,41 @@
  * @oncall react_native
  */
 
-'use strict';
-
 import type Bundler from '../Bundler';
-import type DeltaBundler, {TransformFn} from '../DeltaBundler';
+import type {TransformFn, default as DeltaBundler} from '../DeltaBundler';
 import type {
   BundlerResolution,
   TransformInputOptions,
   TransformResultDependency,
-} from '../DeltaBundler/types.flow';
+} from '../DeltaBundler/types';
 import type {TransformOptions} from '../DeltaBundler/Worker';
-import type {ResolverInputOptions} from '../shared/types.flow';
+import type {ResolverInputOptions} from '../shared/types';
 import type {RequireContext} from './contextModule';
-import type {ConfigT} from 'metro-config/src/configTypes.flow';
+import type {ConfigT} from 'metro-config';
 import type {Type} from 'metro-transform-worker';
 
 import {getContextModuleTemplate} from './contextModuleTemplates';
-import isAssetFile from 'metro-resolver/src/utils/isAssetFile';
+import isAssetFile from 'metro-resolver/private/utils/isAssetFile';
 
-type InlineRequiresRaw = {+blockList: {[string]: true, ...}, ...} | boolean;
+type InlineRequiresRaw =
+  Readonly<{blockList: Readonly<{[string]: true, ...}>, ...}> | boolean;
 
-type TransformOptionsWithRawInlines = {
+type TransformOptionsWithRawInlines = Readonly<{
   ...TransformOptions,
-  +inlineRequires: InlineRequiresRaw,
-};
+  inlineRequires: InlineRequiresRaw,
+}>;
 
 const baseIgnoredInlineRequires = [
   'React',
   'react',
   'react/jsx-dev-runtime',
   'react/jsx-runtime',
+  'react-compiler-runtime',
   'react-native',
 ];
 
 async function calcTransformerOptions(
-  entryFiles: $ReadOnlyArray<string>,
+  entryFiles: ReadonlyArray<string>,
   bundler: Bundler,
   deltaBundler: DeltaBundler<>,
   config: ConfigT,
@@ -53,9 +53,8 @@ async function calcTransformerOptions(
   const baseOptions = {
     customTransformOptions: options.customTransformOptions,
     dev: options.dev,
-    hot: options.hot,
-    inlineRequires: false,
     inlinePlatform: true,
+    inlineRequires: false,
     minify: options.minify,
     platform: options.platform,
     unstable_transformProfile: options.unstable_transformProfile,
@@ -73,11 +72,14 @@ async function calcTransformerOptions(
 
   const getDependencies = async (path: string) => {
     const dependencies = await deltaBundler.getDependencies([path], {
+      lazy: false,
+      onProgress: null,
       resolve: await getResolveDependencyFn(
         bundler,
         options.platform,
         resolverOptions,
       ),
+      shallow: false,
       transform: await getTransformFn(
         [path],
         bundler,
@@ -90,13 +92,12 @@ async function calcTransformerOptions(
         resolverOptions,
       ),
       transformOptions: options,
-      onProgress: null,
-      lazy: false,
       unstable_allowRequireContext:
         config.transformer.unstable_allowRequireContext,
       unstable_enablePackageExports:
         config.resolver.unstable_enablePackageExports,
-      shallow: false,
+      unstable_incrementalResolution:
+        config.resolver.unstable_incrementalResolution,
     });
 
     return Array.from(dependencies.keys());
@@ -104,19 +105,21 @@ async function calcTransformerOptions(
 
   const {transform} = await config.transformer.getTransformOptions(
     entryFiles,
-    {dev: options.dev, hot: options.hot, platform: options.platform},
+    {dev: options.dev, hot: true, platform: options.platform},
     getDependencies,
   );
 
   return {
     ...baseOptions,
-    inlineRequires: transform?.inlineRequires || false,
     experimentalImportSupport: transform?.experimentalImportSupport || false,
-    unstable_disableES6Transforms:
-      transform?.unstable_disableES6Transforms || false,
+    inlineRequires: transform?.inlineRequires || false,
     nonInlinedRequires:
       transform?.nonInlinedRequires || baseIgnoredInlineRequires,
     type: 'module',
+    unstable_memoizeInlineRequires:
+      transform?.unstable_memoizeInlineRequires || false,
+    unstable_nonMemoizedInlineRequires:
+      transform?.unstable_nonMemoizedInlineRequires || [],
   };
 }
 
@@ -131,8 +134,8 @@ function removeInlineRequiresBlockListFromOptions(
   return inlineRequires;
 }
 
-async function getTransformFn(
-  entryFiles: $ReadOnlyArray<string>,
+export async function getTransformFn(
+  entryFiles: ReadonlyArray<string>,
   bundler: Bundler,
   deltaBundler: DeltaBundler<>,
   config: ConfigT,
@@ -179,11 +182,11 @@ async function getTransformFn(
       modulePath,
       {
         ...transformOptions,
-        type: getType(transformOptions.type, modulePath, assetExts),
         inlineRequires: removeInlineRequiresBlockListFromOptions(
           modulePath,
           inlineRequires,
         ),
+        type: getType(transformOptions.type, modulePath, assetExts),
       },
       templateBuffer,
     );
@@ -193,7 +196,7 @@ async function getTransformFn(
 function getType(
   type: string,
   filePath: string,
-  assetExts: $ReadOnlySet<string>,
+  assetExts: ReadonlySet<string>,
 ): Type {
   if (type === 'script') {
     return type;
@@ -206,7 +209,7 @@ function getType(
   return 'module';
 }
 
-async function getResolveDependencyFn(
+export async function getResolveDependencyFn(
   bundler: Bundler,
   platform: ?string,
   resolverOptions: ResolverInputOptions,
@@ -223,8 +226,3 @@ async function getResolveDependencyFn(
       resolverOptions,
     );
 }
-
-module.exports = {
-  getTransformFn,
-  getResolveDependencyFn,
-};

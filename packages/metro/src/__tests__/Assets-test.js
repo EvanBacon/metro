@@ -10,22 +10,38 @@
 
 'use strict';
 
-jest.mock('fs', () => new (require('metro-memory-fs'))());
-jest.mock('image-size');
+jest.mock('node:fs', () => new (require('metro-memory-fs'))());
+jest.mock('../lib/imageSize', () => ({
+  getImageDimensions: jest.fn(() => ({
+    width: mockImageWidth,
+    height: mockImageHeight,
+  })),
+}));
 
 jest.useRealTimers();
 
-const {getAsset, getAssetData} = require('../Assets');
-const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
+const {getAsset, getAssetData, getAssetSize} = require('../Assets');
+const getImageDimensions = require('../lib/imageSize').getImageDimensions;
+const crypto = require('node:crypto');
+const path = require('node:path');
+
+const fs = jest.requireMock('node:fs');
 
 const mockImageWidth = 300;
 const mockImageHeight = 200;
 
-require('image-size').mockReturnValue({
-  width: mockImageWidth,
-  height: mockImageHeight,
+describe('getAssetSize', () => {
+  test('returns null for non-image assets', () => {
+    expect(getAssetSize('mp4', Buffer.from('video'), '/root/video.mp4')).toBe(
+      null,
+    );
+  });
+
+  test('rejects empty image assets', () => {
+    expect(() =>
+      getAssetSize('png', Buffer.alloc(0), '/root/empty.png'),
+    ).toThrow('Image asset `/root/empty.png` cannot be an empty file.');
+  });
 });
 
 describe('getAsset', () => {
@@ -34,7 +50,7 @@ describe('getAsset', () => {
     fs.mkdirSync('/root/imgs', {recursive: true});
   });
 
-  it('should fail if the extension is not registerd', async () => {
+  test('should fail if the extension is not registerd', async () => {
     writeImages({'b.png': 'b image', 'b@2x.png': 'b2 image'});
 
     await expect(
@@ -42,7 +58,7 @@ describe('getAsset', () => {
     ).rejects.toThrow(Error);
   });
 
-  it('should work for the simple case', () => {
+  test('should work for the simple case', () => {
     writeImages({'b.png': 'b image', 'b@2x.png': 'b2 image'});
 
     return Promise.all([
@@ -51,7 +67,7 @@ describe('getAsset', () => {
     ]).then(resp => resp.forEach(data => expect(data).toBe('b image')));
   });
 
-  it('should work for the simple case with platform ext', async () => {
+  test('should work for the simple case with platform ext', async () => {
     writeImages({
       'b.ios.png': 'b ios image',
       'b.android.png': 'b android image',
@@ -76,7 +92,7 @@ describe('getAsset', () => {
     ]);
   });
 
-  it('should work for the simple case with jpg', () => {
+  test('should work for the simple case with jpg', () => {
     writeImages({
       'b.png': 'png image',
       'b.jpg': 'jpeg image',
@@ -88,7 +104,7 @@ describe('getAsset', () => {
     ]).then(data => expect(data).toEqual(['jpeg image', 'png image']));
   });
 
-  it('should pick the bigger one', async () => {
+  test('should pick the bigger one', async () => {
     writeImages({
       'b@1x.png': 'b1 image',
       'b@2x.png': 'b2 image',
@@ -101,7 +117,7 @@ describe('getAsset', () => {
     );
   });
 
-  it('should pick the bigger one with platform ext', async () => {
+  test('should pick the bigger one with platform ext', async () => {
     writeImages({
       'b@1x.png': 'b1 image',
       'b@2x.png': 'b2 image',
@@ -121,7 +137,7 @@ describe('getAsset', () => {
     ).toEqual(['b4 image', 'b4 ios image']);
   });
 
-  it('should find an image located on a watchFolder', async () => {
+  test('should find an image located on a watchFolder', async () => {
     fs.mkdirSync('/anotherfolder', {recursive: true});
 
     writeImages({
@@ -139,7 +155,7 @@ describe('getAsset', () => {
     ).toBe('b image');
   });
 
-  it('should throw an error if an image is not located on any watchFolder', async () => {
+  test('should throw an error if an image is not located on any watchFolder', async () => {
     fs.mkdirSync('/anotherfolder', {recursive: true});
 
     writeImages({
@@ -150,6 +166,97 @@ describe('getAsset', () => {
       getAssetStr('../anotherfolder/b.png', '/root', [], null, ['png']),
     ).rejects.toBeInstanceOf(Error);
   });
+
+  test('should find an image when fileExistsInFileMap returns true', async () => {
+    writeImages({'b.png': 'b image'});
+
+    expect(
+      await getAssetStr('imgs/b.png', '/root', [], null, ['png'], () => true),
+    ).toBe('b image');
+  });
+
+  test('should throw an error when fileExistsInFileMap returns false', async () => {
+    writeImages({'b.png': 'b image'});
+
+    await expect(
+      getAssetStr('imgs/b.png', '/root', [], null, ['png'], () => false),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  test('should serve scale variant when only scale variants exist and fileExistsInFileMap is provided', async () => {
+    writeImages({
+      'b@2x.png': 'b2 image',
+      'b@3x.png': 'b3 image',
+    });
+
+    expect(
+      await getAssetStr(
+        'imgs/b@2x.png',
+        '/root',
+        [],
+        null,
+        ['png'],
+        () => true,
+      ),
+    ).toBe('b2 image');
+  });
+
+  test('should throw when fileExistsInFileMap rejects the resolved scale variant', async () => {
+    writeImages({
+      'b@2x.png': 'b2 image',
+      'b@3x.png': 'b3 image',
+    });
+
+    await expect(
+      getAssetStr('imgs/b@2x.png', '/root', [], null, ['png'], () => false),
+    ).rejects.toBeInstanceOf(Error);
+  });
+
+  test('should check fileExistsInFileMap against the resolved file, not the base path', async () => {
+    writeImages({
+      'b@2x.png': 'b2 image',
+      'b@3x.png': 'b3 image',
+    });
+
+    const checkedPaths = [];
+    const result = await getAssetStr(
+      'imgs/b@2x.png',
+      '/root',
+      [],
+      null,
+      ['png'],
+      filePath => {
+        checkedPaths.push(filePath);
+        return true;
+      },
+    );
+
+    expect(result).toBe('b2 image');
+    expect(checkedPaths).toEqual(['/root/imgs/b@2x.png']);
+  });
+
+  test('should check fileExistsInFileMap for the fallback (highest scale) file', async () => {
+    writeImages({
+      'b@1x.png': 'b1 image',
+      'b@2x.png': 'b2 image',
+    });
+
+    const checkedPaths = [];
+    const result = await getAssetStr(
+      'imgs/b@3x.png',
+      '/root',
+      [],
+      null,
+      ['png'],
+      filePath => {
+        checkedPaths.push(filePath);
+        return true;
+      },
+    );
+
+    expect(result).toBe('b2 image');
+    expect(checkedPaths).toEqual(['/root/imgs/b@2x.png']);
+  });
 });
 
 describe('getAssetData', () => {
@@ -158,7 +265,7 @@ describe('getAssetData', () => {
     fs.mkdirSync('/root/imgs', {recursive: true});
   });
 
-  it('should get assetData', () => {
+  test('should get assetData', () => {
     writeImages({
       'b@1x.png': 'b1 image',
       'b@2x.png': 'b2 image',
@@ -192,7 +299,19 @@ describe('getAssetData', () => {
     });
   });
 
-  it('should get assetData for non-png images', async () => {
+  test('parses dimensions from the first asset file buffer', async () => {
+    writeImages({'b@1x.png': 'b1 image', 'b@2x.png': 'b2 image'});
+
+    await getAssetData('/root/imgs/b.png', 'imgs/b.png', [], null, '/assets');
+
+    expect(getImageDimensions).toHaveBeenCalledWith(
+      'png',
+      Buffer.from('b1 image'),
+      '/root/imgs/b@1x.png',
+    );
+  });
+
+  test('should get assetData for non-png images', async () => {
     writeImages({
       'b@1x.jpg': 'b1 image',
       'b@2x.jpg': 'b2 image',
@@ -226,7 +345,7 @@ describe('getAssetData', () => {
     );
   });
 
-  it('respects `options.publicPath` for output httpServerLocation', async () => {
+  test('respects `options.publicPath` for output httpServerLocation', async () => {
     writeImages({
       'b@1x.jpg': 'b1 image',
       'b@2x.jpg': 'b2 image',
@@ -260,7 +379,7 @@ describe('getAssetData', () => {
     );
   });
 
-  it('loads and runs asset plugins', async () => {
+  test('loads and runs asset plugins', async () => {
     jest.mock(
       'mockPlugin1',
       () => {
@@ -327,7 +446,7 @@ describe('getAssetData', () => {
       });
     });
 
-    it('uses the file contents to build the hash', async () => {
+    test('uses the file contents to build the hash', async () => {
       const hash = crypto.createHash('md5');
 
       for (const name of fs.readdirSync('/root/imgs')) {
@@ -345,7 +464,7 @@ describe('getAssetData', () => {
       ).toEqual(expect.objectContaining({hash: hash.digest('hex')}));
     });
 
-    it('changes the hash when the passed-in file watcher emits an `all` event', async () => {
+    test('changes the hash when the passed-in file watcher emits an `all` event', async () => {
       const initialData = await getAssetData(
         '/root/imgs/b.jpg',
         'imgs/b.jpg',

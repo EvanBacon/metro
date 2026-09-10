@@ -13,10 +13,10 @@ import type {WatchmanClockSpec} from '../../flow-types';
 import type {
   CanonicalPath,
   CrawlerOptions,
+  CrawlResult,
   FileData,
-  FileMetaData,
+  FileMetadata,
   Path,
-  WatchmanClocks,
 } from '../../flow-types';
 import type {WatchmanQueryResponse, WatchmanWatchResponse} from 'fb-watchman';
 
@@ -24,15 +24,14 @@ import normalizePathSeparatorsToPosix from '../../lib/normalizePathSeparatorsToP
 import normalizePathSeparatorsToSystem from '../../lib/normalizePathSeparatorsToSystem';
 import {RootPathUtils} from '../../lib/RootPathUtils';
 import {planQuery} from './planQuery';
+import watchman from 'fb-watchman';
 import invariant from 'invariant';
-import * as path from 'path';
-import {performance} from 'perf_hooks';
-
-const watchman = require('fb-watchman');
+import * as path from 'node:path';
+import {performance} from 'node:perf_hooks';
 
 type WatchmanRoots = Map<
-  string,
-  $ReadOnly<{directoryFilters: Array<string>, watcher: string}>,
+  string, // Posix-separated absolute path
+  Readonly<{directoryFilters: Array<string>, watcher: string}>,
 >;
 
 const WATCHMAN_WARNING_INITIAL_DELAY_MILLISECONDS = 10000;
@@ -47,7 +46,7 @@ function makeWatchmanError(error: Error): Error {
   return error;
 }
 
-module.exports = async function watchmanCrawl({
+export default async function watchmanCrawl({
   abortSignal,
   computeSha1,
   extensions,
@@ -58,11 +57,7 @@ module.exports = async function watchmanCrawl({
   previousState,
   rootDir,
   roots,
-}: CrawlerOptions): Promise<{
-  changedFiles: FileData,
-  removedFiles: Set<CanonicalPath>,
-  clocks: WatchmanClocks,
-}> {
+}: CrawlerOptions): Promise<CrawlResult> {
   abortSignal?.throwIfAborted();
 
   const client = new watchman.Client();
@@ -103,7 +98,7 @@ module.exports = async function watchmanCrawl({
     try {
       const response = await new Promise<WatchmanQueryResponse>(
         (resolve, reject) =>
-          // $FlowFixMe[incompatible-call] - dynamic call of command
+          // $FlowFixMe[incompatible-type] - dynamic call of command
           client.command(
             [command, ...args],
             (error: ?Error, result: WatchmanQueryResponse) =>
@@ -117,10 +112,10 @@ module.exports = async function watchmanCrawl({
           command,
         });
       }
-      // $FlowFixMe[incompatible-return]
+      // $FlowFixMe[incompatible-type]
       return response;
     } finally {
-      // $FlowFixMe[incompatible-call] clearInterval / clearTimeout are interchangeable
+      // $FlowFixMe[incompatible-type] clearInterval / clearTimeout are interchangeable
       clearInterval(intervalOrTimeoutId);
       if (didLogWatchmanWaitMessage) {
         onStatus({
@@ -133,7 +128,7 @@ module.exports = async function watchmanCrawl({
   };
 
   async function getWatchmanRoots(
-    roots: $ReadOnlyArray<Path>,
+    roots: ReadonlyArray<Path>,
   ): Promise<WatchmanRoots> {
     perfLogger?.point('watchmanCrawl/getWatchmanRoots_start');
     const watchmanRoots: WatchmanRoots = new Map();
@@ -181,7 +176,7 @@ module.exports = async function watchmanCrawl({
 
     await Promise.all(
       Array.from(rootProjectDirMappings).map(
-        async ([root, {directoryFilters, watcher}], index) => {
+        async ([posixSeparatedRoot, {directoryFilters, watcher}], index) => {
           // Jest is only going to store one type of clock; a string that
           // represents a local clock. However, the Watchman crawler supports
           // a second type of clock that can be written by automation outside of
@@ -191,7 +186,11 @@ module.exports = async function watchmanCrawl({
           // By using scm queries, we can create the haste map on a different
           // system and import it, transforming the clock into a local clock.
           const since = previousState.clocks.get(
-            normalizePathSeparatorsToPosix(pathUtils.absoluteToNormal(root)),
+            normalizePathSeparatorsToPosix(
+              pathUtils.absoluteToNormal(
+                normalizePathSeparatorsToSystem(posixSeparatedRoot),
+              ),
+            ),
           );
 
           perfLogger?.annotate({
@@ -218,7 +217,7 @@ module.exports = async function watchmanCrawl({
           perfLogger?.point(`watchmanCrawl/query_${index}_start`);
           const response = await cmd<WatchmanQueryResponse>(
             'query',
-            root,
+            posixSeparatedRoot,
             query,
           );
           perfLogger?.point(`watchmanCrawl/query_${index}_end`);
@@ -232,7 +231,7 @@ module.exports = async function watchmanCrawl({
             isFresh = isFresh || response.is_fresh_instance;
           }
 
-          results.set(root, response);
+          results.set(posixSeparatedRoot, response);
         },
       ),
     );
@@ -329,14 +328,13 @@ module.exports = async function watchmanCrawl({
           symlinkInfo = fileData['symlink_target'] ?? 1;
         }
 
-        const nextData: FileMetaData = [
-          '',
+        const nextData: FileMetadata = [
           mtime,
           size,
           0,
-          '',
           sha1hex ?? null,
           symlinkInfo,
+          null,
         ];
 
         // If watchman is fresh, the removed files map starts with all files
@@ -363,4 +361,4 @@ module.exports = async function watchmanCrawl({
     removedFiles,
     clocks: newClocks,
   };
-};
+}

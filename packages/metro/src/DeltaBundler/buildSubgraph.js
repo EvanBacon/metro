@@ -12,33 +12,35 @@ import type {RequireContext} from '../lib/contextModule';
 import type {
   Dependency,
   ModuleData,
+  ResolvedDependency,
   ResolveFn,
   TransformFn,
   TransformResultDependency,
-} from './types.flow';
+} from './types';
 
 import {deriveAbsolutePathFromContext} from '../lib/contextModule';
-import path from 'path';
+import {isResolvedDependency} from '../lib/isResolvedDependency';
+import path from 'node:path';
 
-type Parameters<T> = $ReadOnly<{
+type Parameters<T> = Readonly<{
   resolve: ResolveFn,
   transform: TransformFn<T>,
-  shouldTraverse: Dependency => boolean,
+  shouldTraverse: ResolvedDependency => boolean,
 }>;
 
 function resolveDependencies(
   parentPath: string,
-  dependencies: $ReadOnlyArray<TransformResultDependency>,
+  dependencies: ReadonlyArray<TransformResultDependency>,
   resolve: ResolveFn,
 ): {
   dependencies: Map<string, Dependency>,
   resolvedContexts: Map<string, RequireContext>,
 } {
-  const maybeResolvedDeps = new Map<string, void | Dependency>();
+  const maybeResolvedDeps = new Map<string, Dependency>();
   const resolvedContexts = new Map<string, RequireContext>();
 
   for (const dep of dependencies) {
-    let resolvedDep;
+    let maybeResolvedDep: Dependency;
     const key = dep.data.key;
 
     // `require.context`
@@ -50,24 +52,24 @@ function resolveDependencies(
       const absolutePath = deriveAbsolutePathFromContext(from, contextParams);
 
       const resolvedContext: RequireContext = {
-        from,
-        mode: contextParams.mode,
-        recursive: contextParams.recursive,
         filter: new RegExp(
           contextParams.filter.pattern,
           contextParams.filter.flags,
         ),
+        from,
+        mode: contextParams.mode,
+        recursive: contextParams.recursive,
       };
 
       resolvedContexts.set(key, resolvedContext);
 
-      resolvedDep = {
+      maybeResolvedDep = {
         absolutePath,
         data: dep,
       };
     } else {
       try {
-        resolvedDep = {
+        maybeResolvedDep = {
           absolutePath: resolve(parentPath, dep).filePath,
           data: dep,
         };
@@ -77,6 +79,9 @@ function resolveDependencies(
         if (dep.data.isOptional !== true) {
           throw error;
         }
+        maybeResolvedDep = {
+          data: dep,
+        };
       }
     }
 
@@ -85,26 +90,18 @@ function resolveDependencies(
         `resolveDependencies: Found duplicate dependency key '${key}' in ${parentPath}`,
       );
     }
-    maybeResolvedDeps.set(key, resolvedDep);
+    maybeResolvedDeps.set(key, maybeResolvedDep);
   }
 
-  const resolvedDeps = new Map<string, Dependency>();
-  // Return just the dependencies we successfully resolved.
-  // FIXME: This has a bad bug affecting all dependencies *after* an unresolved
-  // optional dependency. We'll need to propagate the nulls all the way to the
-  // serializer and the require() runtime to keep the dependency map from being
-  // desynced from the contents of the module.
-  for (const [key, resolvedDep] of maybeResolvedDeps) {
-    if (resolvedDep) {
-      resolvedDeps.set(key, resolvedDep);
-    }
-  }
-  return {dependencies: resolvedDeps, resolvedContexts};
+  return {
+    dependencies: maybeResolvedDeps,
+    resolvedContexts,
+  };
 }
 
 export async function buildSubgraph<T>(
-  entryPaths: $ReadOnlySet<string>,
-  resolvedContexts: $ReadOnlyMap<string, ?RequireContext>,
+  entryPaths: ReadonlySet<string>,
+  resolvedContexts: ReadonlyMap<string, ?RequireContext>,
   {resolve, transform, shouldTraverse}: Parameters<T>,
 ): Promise<{
   moduleData: Map<string, ModuleData<T>>,
@@ -138,9 +135,12 @@ export async function buildSubgraph<T>(
     });
 
     await Promise.all(
-      [...resolutionResult.dependencies]
-        .filter(([key, dependency]) => shouldTraverse(dependency))
-        .map(([key, dependency]) =>
+      [...resolutionResult.dependencies.values()]
+        .filter(
+          dependency =>
+            isResolvedDependency(dependency) && shouldTraverse(dependency),
+        )
+        .map(dependency =>
           visit(
             dependency.absolutePath,
             resolutionResult.resolvedContexts.get(dependency.data.data.key),
@@ -157,5 +157,5 @@ export async function buildSubgraph<T>(
     ),
   );
 
-  return {moduleData, errors};
+  return {errors, moduleData};
 }

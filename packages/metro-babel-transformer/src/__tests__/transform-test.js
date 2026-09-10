@@ -11,11 +11,11 @@
 'use strict';
 
 const {transform} = require('../index.js');
-const path = require('path');
+const path = require('node:path');
 
 const PROJECT_ROOT = path.sep === '/' ? '/my/project' : 'C:\\my\\project';
 
-it('exposes the correct absolute path to a source file to plugins', () => {
+test('exposes the correct absolute path to a source file to plugins', () => {
   let visitorFilename;
   let pluginCwd;
   transform({
@@ -40,7 +40,6 @@ it('exposes the correct absolute path to a source file to plugins', () => {
       enableBabelRuntime: false,
       enableBabelRCLookup: false,
       globalPrefix: '__metro__',
-      hot: false,
       minify: false,
       platform: null,
       publicPath: 'test',

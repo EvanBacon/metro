@@ -9,11 +9,9 @@
  * @oncall react_native
  */
 
-'use strict';
-
-import Resolver from '../index';
+import * as Resolver from '../index';
 import {createResolutionContext} from './utils';
-import path from 'path';
+import path from 'node:path';
 
 describe('asset resolutions', () => {
   const baseContext = {

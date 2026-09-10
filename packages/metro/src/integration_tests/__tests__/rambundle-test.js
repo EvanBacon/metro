@@ -8,21 +8,18 @@
  * @oncall react_native
  */
 
-'use strict';
+import * as Metro from '../../..';
+import RamBundleParser from '../../lib/RamBundleParser';
+import * as ramBundleOutput from '../../shared/output/unbundle';
 
-const Metro = require('../../..');
-const RamBundleParser = require('../../lib/RamBundleParser');
-const ramBundleOutput = require('../../shared/output/unbundle');
-const fs = require('fs');
-const os = require('os');
-const path = require('path');
-const vm = require('vm');
-
-jest.unmock('cosmiconfig');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const vm = require('node:vm');
 
 jest.setTimeout(30 * 1000);
 
-it('builds and executes a RAM bundle', async () => {
+test('builds and executes a RAM bundle', async () => {
   const config = await Metro.loadConfig({
     config: require.resolve('../metro.config.js'),
   });

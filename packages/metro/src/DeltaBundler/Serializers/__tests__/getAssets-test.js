@@ -8,12 +8,10 @@
  * @oncall react_native
  */
 
-'use strict';
-
 jest.mock('../../../Assets');
 
-const {getAssetData} = require('../../../Assets');
-const getAssets = require('../getAssets');
+import {getAssetData} from '../../../Assets';
+import getAssets from '../getAssets';
 
 beforeEach(() => {
   getAssetData.mockImplementation(async (path, localPath) => ({
@@ -22,7 +20,7 @@ beforeEach(() => {
   }));
 });
 
-it('should return the bundle assets', async () => {
+test('should return the bundle assets', async () => {
   const dependencies = new Map([
     [
       '/tmp/1.js',

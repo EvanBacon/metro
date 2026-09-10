@@ -12,22 +12,26 @@
 
 jest
   .setMock('jest-worker', () => ({}))
-  .mock('fs', () => new (require('metro-memory-fs'))())
-  .mock('assert')
+  .mock('node:fs', () => new (require('metro-memory-fs'))())
+  .mock('node:assert')
   .mock('../getTransformCacheKey', () => jest.fn(() => 'hash'))
   .mock('../WorkerFarm')
   .mock('/path/to/transformer.js', () => ({}), {virtual: true});
 
-var Transformer = require('../Transformer');
-var fs = require('fs');
-var {getDefaultValues} = require('metro-config/src/defaults');
-var {mergeConfig} = require('metro-config/src/loadConfig');
+// Must be required after mocks above
+const Transformer = require('../Transformer').default;
+const {getDefaultValues} = require('metro-config').getDefaultConfig;
+const {mergeConfig} = require('metro-config/private/loadConfig');
+
+const fs = jest.requireMock('node:fs');
 
 describe('Transformer', function () {
   let watchFolders;
   let projectRoot;
   let commonOptions;
-  const getSha1 = jest.fn(() => '0123456789012345678901234567890123456789');
+  const getOrComputeSha1 = jest.fn(() => ({
+    sha1: '0123456789012345678901234567890123456789',
+  }));
 
   beforeEach(function () {
     const baseConfig = {
@@ -59,7 +63,7 @@ describe('Transformer', function () {
     require('../getTransformCacheKey').mockClear();
   });
 
-  it('uses new cache layers when transforming if requested to do so', async () => {
+  test('uses new cache layers when transforming if requested to do so', async () => {
     const get = jest.fn();
     const set = jest.fn();
 
@@ -69,10 +73,10 @@ describe('Transformer', function () {
         cacheStores: [{get, set}],
         watchFolders,
       },
-      getSha1,
+      {getOrComputeSha1},
     );
 
-    require('../WorkerFarm').prototype.transform.mockReturnValue({
+    require('../WorkerFarm').default.prototype.transform.mockReturnValue({
       sha1: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
       result: {},
     });
@@ -80,7 +84,7 @@ describe('Transformer', function () {
     await transformerInstance.transformFile('./foo.js', {});
 
     // We got the SHA-1 of the file from the dependency graph.
-    expect(getSha1).toBeCalledWith('./foo.js');
+    expect(getOrComputeSha1).toBeCalledWith('./foo.js');
 
     // Only one get, with the original SHA-1.
     expect(get).toHaveBeenCalledTimes(1);
@@ -101,37 +105,108 @@ describe('Transformer', function () {
     );
   });
 
-  it('short-circuits the transformer cache key when the cache is disabled', async () => {
+  test('logs cache read errors to reporter', async () => {
+    const readError = new Error('Cache write error');
+    const get = jest.fn().mockImplementation(() => {
+      throw readError;
+    });
+    const set = jest.fn();
+    const mockReporter = {
+      update: jest.fn(),
+    };
+
     const transformerInstance = new Transformer(
       {
         ...commonOptions,
-        cacheStores: [],
+        reporter: mockReporter,
+        cacheStores: [{get, set}],
         watchFolders,
       },
-      getSha1,
+      {getOrComputeSha1},
     );
 
-    require('../WorkerFarm').prototype.transform.mockReturnValue({
+    require('../WorkerFarm').default.prototype.transform.mockReturnValue({
       sha1: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
       result: {},
     });
 
-    await transformerInstance.transformFile('./foo.js', {});
+    await expect(
+      transformerInstance.transformFile('./foo.js', {}),
+    ).rejects.toBe(readError);
 
-    expect(require('../getTransformCacheKey')).not.toBeCalled();
+    expect(get).toHaveBeenCalledTimes(1);
+
+    expect(mockReporter.update).toBeCalledWith({
+      type: 'cache_read_error',
+      error: readError,
+    });
   });
 
-  it('short-circuits the transformer cache key when the cache is disabled', async () => {
+  test('logs cache write errors to reporter', async () => {
+    class MockStore {
+      get = jest.fn();
+      set = jest.fn().mockImplementation(() => {
+        throw writeError;
+      });
+    }
+    const store = new MockStore();
+    const writeError = new Error('Cache write error');
+    const mockReporter = {
+      update: jest.fn(),
+    };
+
+    const transformerInstance = new Transformer(
+      {
+        ...commonOptions,
+        reporter: mockReporter,
+        cacheStores: [store],
+        watchFolders,
+      },
+      {getOrComputeSha1},
+    );
+
+    require('../WorkerFarm').default.prototype.transform.mockReturnValue({
+      sha1: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
+      result: {},
+    });
+
+    let resolve;
+    const waitForError = new Promise(r => {
+      resolve = r;
+    });
+    mockReporter.update.mockImplementation(event => {
+      if (event.type === 'cache_write_error') {
+        resolve();
+      }
+    });
+
+    await Promise.all([
+      transformerInstance.transformFile('./foo.js', {}),
+      waitForError,
+    ]);
+
+    expect(store.set).toHaveBeenCalledTimes(1);
+
+    expect(mockReporter.update).toBeCalledWith({
+      type: 'cache_write_error',
+      error: new AggregateError(
+        [writeError],
+        'Cache write failed for store(s): MockStore',
+      ),
+    });
+  });
+
+  test('short-circuits the transformer cache key when the cache is disabled', async () => {
     const transformerInstance = new Transformer(
       {
         ...commonOptions,
         cacheStores: [],
         watchFolders,
       },
-      getSha1,
+      {getOrComputeSha1},
     );
 
-    require('../WorkerFarm').prototype.transform.mockReturnValue({
+    require('../WorkerFarm').default.prototype.transform.mockReturnValue({
       sha1: 'abcdefabcdefabcdefabcdefabcdefabcdefabcd',
       result: {},
     });

@@ -9,30 +9,40 @@
  * @oncall react_native
  */
 
-'use strict';
+import type {TransformResultDependency} from 'metro/private/DeltaBundler/types';
 
-import type {TransformResultDependency} from 'metro/src/DeltaBundler/types.flow';
+export type Result<out TResolution, out TCandidates> =
+  | {readonly type: 'resolved', readonly resolution: TResolution}
+  | {readonly type: 'failed', readonly candidates: TCandidates};
 
-export type Result<+TResolution, +TCandidates> =
-  | {+type: 'resolved', +resolution: TResolution}
-  | {+type: 'failed', +candidates: TCandidates};
+export type Resolution =
+  FileResolution | VirtualResolution | {readonly type: 'empty'};
 
-export type Resolution = FileResolution | {+type: 'empty'};
-
-export type SourceFileResolution = $ReadOnly<{
+export type SourceFileResolution = Readonly<{
   type: 'sourceFile',
   filePath: string,
 }>;
-export type AssetFileResolution = $ReadOnlyArray<string>;
-export type AssetResolution = $ReadOnly<{
+export type AssetFileResolution = ReadonlyArray<string>;
+export type AssetResolution = Readonly<{
   type: 'assetFiles',
   filePaths: AssetFileResolution,
 }>;
 export type FileResolution = AssetResolution | SourceFileResolution;
 
+/**
+ * A JS module whose contents are provided out-of-band rather than read from a file
+ * on disk.
+ *
+ * NOTE: Resolving to a virtual module is not yet implemented. This is a reservation.
+ */
+export type VirtualResolution = Readonly<{
+  type: 'virtualModule',
+  ...
+}>;
+
 export type FileAndDirCandidates = {
-  +dir: FileCandidates,
-  +file: FileCandidates,
+  readonly dir: ?FileCandidates,
+  readonly file: ?FileCandidates,
 };
 
 /**
@@ -42,55 +52,81 @@ export type FileAndDirCandidates = {
  */
 export type FileCandidates =
   // We only tried to resolve a specific asset.
-  | {+type: 'asset', +name: string}
+  | {readonly type: 'asset', readonly name: string}
   // We attempted to resolve a name as being a source file (ex. JavaScript,
   // JSON...), in which case there can be several extensions we tried, for
   // example `/js/foo.ios.js`, `/js/foo.js`, etc. for a single prefix '/js/foo'.
   | {
-      +type: 'sourceFile',
+      readonly type: 'sourceFile',
       filePathPrefix: string,
-      +candidateExts: $ReadOnlyArray<string>,
+      readonly candidateExts: ReadonlyArray<string>,
     };
 
-export type ExportMap = $ReadOnly<{
-  [subpathOrCondition: string]: string | ExportMap | null,
+export type ExportsLikeMap = Readonly<{
+  [subpathOrCondition: string]: string | ExportsLikeMap | null,
 }>;
 
 /** "exports" mapping where values may be legacy Node.js <13.7 array format. */
-export type ExportMapWithFallbacks = $ReadOnly<{
-  [subpath: string]: $Values<ExportMap> | ExportValueWithFallback,
+export type ExportMapWithFallbacks = Readonly<{
+  [subpath: string]: Values<ExportsLikeMap> | ExportValueWithFallback,
 }>;
 
 /** "exports" subpath value when in legacy Node.js <13.7 array format. */
 export type ExportValueWithFallback =
-  | $ReadOnlyArray<ExportMap | string>
+  | ReadonlyArray<ExportsLikeMap | string>
   // JSON can also contain exotic nested array structure, which will not be parsed
-  | $ReadOnlyArray<$ReadOnlyArray<mixed>>;
+  | ReadonlyArray<ReadonlyArray<unknown>>;
 
 export type ExportsField =
   | string
-  | $ReadOnlyArray<string>
+  | ReadonlyArray<string>
   | ExportValueWithFallback
-  | ExportMap
+  | ExportsLikeMap
   | ExportMapWithFallbacks;
 
-export type PackageJson = $ReadOnly<{
+export type FlattenedExportMap = ReadonlyMap<
+  string /* subpath */,
+  string | null,
+>;
+
+export type NormalizedExportsLikeMap = Map<
+  string /* subpath */,
+  null | string | ExportsLikeMap,
+>;
+
+export type PackageJson = Readonly<{
   name?: string,
   main?: string,
   exports?: ExportsField,
+  imports?: ExportsLikeMap,
   ...
 }>;
 
-export type PackageInfo = $ReadOnly<{
+export type PackageInfo = Readonly<{
   packageJson: PackageJson,
   rootPath: string,
+}>;
+
+export type PackageForModule = Readonly<{
+  ...PackageInfo,
+  /* A system-separated subpath (with no './' prefix) that reflects the subpath
+     of the given candidate relative to the returned rootPath. */
+  packageRelativePath: string,
 }>;
 
 /**
  * Check existence of a single file.
  */
 export type DoesFileExist = (filePath: string) => boolean;
-export type GetRealPath = (path: string) => ?string;
+
+/**
+ * Performs a lookup against an absolute or project-relative path to determine
+ * whether it exists as a file or directory. Follows any symlinks, and returns
+ * a real absolute path on existence.
+ */
+export type FileSystemLookup = (
+  absoluteOrProjectRelativePath: string,
+) => {exists: false} | {exists: true, type: 'f' | 'd', realPath: string};
 
 /**
  * Given a directory path and the base asset name, return a list of all the
@@ -102,15 +138,21 @@ export type ResolveAsset = (
   dirPath: string,
   assetName: string,
   extension: string,
-) => ?$ReadOnlyArray<string>;
+) => ?ReadonlyArray<string>;
 
-export type ResolutionContext = $ReadOnly<{
+export type ResolutionContext = Readonly<{
   allowHaste: boolean,
-  assetExts: $ReadOnlySet<string>,
+  assetExts: ReadonlySet<string>,
   customResolverOptions: CustomResolverOptions,
   disableHierarchicalLookup: boolean,
+
+  /**
+   * Determine whether a regular file exists at the given path.
+   *
+   * @deprecated, prefer `fileSystemLookup`
+   */
   doesFileExist: DoesFileExist,
-  extraNodeModules: ?{[string]: string, ...},
+  extraNodeModules: ?{[packageName: string]: string, ...},
 
   /** Is resolving for a development bundle. */
   dev: boolean,
@@ -121,12 +163,13 @@ export type ResolutionContext = $ReadOnly<{
   getPackage: (packageJsonPath: string) => ?PackageJson,
 
   /**
-   * Get the package information and parsed `package.json` file for for a given
-   * module path, if it is contained within an npm package.
+   * Get the closest package scope, parsed `package.json` and relative subpath
+   * for a given absolute candidate path (which need not exist), or null if
+   * there is no package.json closer than the nearest node_modules directory.
    *
    * @deprecated See https://github.com/facebook/metro/commit/29c77bff31e2475a086bc3f04073f485da8f9ff0
    */
-  getPackageForModule: (modulePath: string) => ?PackageInfo,
+  getPackageForModule: (absoluteModulePath: string) => ?PackageForModule,
 
   /**
    * The dependency descriptor, within the origin module, corresponding to the
@@ -136,10 +179,28 @@ export type ResolutionContext = $ReadOnly<{
   dependency?: TransformResultDependency,
 
   /**
+   * Whether the dependency to be resolved was declared with an ESM import,
+   * ("import x from 'y'" or "await import('z')"), or a CommonJS "require".
+   * Corresponds to the criteria Node.js uses to assert an "import"
+   * resolution condition, vs "require".
+   *
+   * Always equal to dependency.data.isESMImport where dependency is provided,
+   * but may be used for resolution.
+   */
+  isESMImport?: boolean,
+
+  /**
+   * Synchonously returns information about a given absolute path, including
+   * whether it exists, whether it is a file or directory, and its absolute
+   * real path.
+   */
+  fileSystemLookup: FileSystemLookup,
+
+  /**
    * The ordered list of fields to read in `package.json` to resolve a main
    * entry point based on the "browser" field spec.
    */
-  mainFields: $ReadOnlyArray<string>,
+  mainFields: ReadonlyArray<string>,
 
   /**
    * Full path of the module that is requiring or importing the module to be
@@ -148,7 +209,7 @@ export type ResolutionContext = $ReadOnly<{
    */
   originModulePath: string,
 
-  nodeModulesPaths: $ReadOnlyArray<string>,
+  nodeModulesPaths: ReadonlyArray<string>,
   preferNativePlatform: boolean,
   resolveAsset: ResolveAsset,
   redirectModulePath: (modulePath: string) => string | false,
@@ -167,17 +228,29 @@ export type ResolutionContext = $ReadOnly<{
   resolveHastePackage: (name: string) => ?string,
 
   resolveRequest?: ?CustomResolver,
-  sourceExts: $ReadOnlyArray<string>,
-  unstable_conditionNames: $ReadOnlyArray<string>,
-  unstable_conditionsByPlatform: $ReadOnly<{
-    [platform: string]: $ReadOnlyArray<string>,
+
+  /**
+   * Resolvers for specifiers prefixed with a URI scheme, keyed by the
+   * lowercased scheme (the part before the first ':', without the colon). The
+   * scheme parsed from a specifier is lowercased before lookup, so keys must be
+   * lowercase (both `Foo:` and `foo:` match the `'foo'` key). When a
+   * specifier's scheme matches a key, the corresponding resolver is invoked
+   * instead of the default algorithm, receiving the full specifier and a
+   * context whose `resolveRequest` delegates to default resolution.
+   */
+  schemeResolvers?: Readonly<{[scheme: string]: CustomResolver}>,
+
+  sourceExts: ReadonlyArray<string>,
+  unstable_conditionNames: ReadonlyArray<string>,
+  unstable_conditionsByPlatform: Readonly<{
+    [platform: string]: ReadonlyArray<string>,
   }>,
   unstable_enablePackageExports: boolean,
-  unstable_getRealPath?: ?GetRealPath,
+  unstable_incrementalResolution: boolean,
   unstable_logWarning: (message: string) => void,
 }>;
 
-export type CustomResolutionContext = $ReadOnly<{
+export type CustomResolutionContext = Readonly<{
   ...ResolutionContext,
   resolveRequest: CustomResolver,
 }>;
@@ -190,6 +263,6 @@ export type CustomResolver = (
 
 export type CustomResolverOptions = {
   __proto__: null,
-  +[string]: mixed,
+  readonly [key: string]: unknown,
   ...
 };

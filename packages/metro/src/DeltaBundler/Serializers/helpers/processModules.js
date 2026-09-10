@@ -9,14 +9,13 @@
  * @oncall react_native
  */
 
-'use strict';
+import type {Module} from '../../types';
+import type {Options as WrapModuleOptions} from './js';
 
-import type {Module} from '../../types.flow';
+import {isJsModule, wrapModule} from './js';
 
-const {isJsModule, wrapModule} = require('./js');
-
-function processModules(
-  modules: $ReadOnlyArray<Module<>>,
+export default function processModules(
+  modules: ReadonlyArray<Module<>>,
   {
     filter = () => true,
     createModuleId,
@@ -25,7 +24,10 @@ function processModules(
     projectRoot,
     serverRoot,
     sourceUrl,
-  }: $ReadOnly<{
+    dependencyMapReservedName,
+    unstable_inlineDependencyMap,
+    unstable_getAsyncDependencyPath,
+  }: Readonly<{
     filter?: (module: Module<>) => boolean,
     createModuleId: string => number,
     dev: boolean,
@@ -33,8 +35,11 @@ function processModules(
     projectRoot: string,
     serverRoot: string,
     sourceUrl: ?string,
+    dependencyMapReservedName?: ?string,
+    unstable_inlineDependencyMap?: boolean,
+    unstable_getAsyncDependencyPath?: WrapModuleOptions['unstable_getAsyncDependencyPath'],
   }>,
-): $ReadOnlyArray<[Module<>, string]> {
+): ReadonlyArray<[Module<>, string]> {
   return [...modules]
     .filter(isJsModule)
     .filter(filter)
@@ -47,8 +52,9 @@ function processModules(
         projectRoot,
         serverRoot,
         sourceUrl,
+        dependencyMapReservedName,
+        unstable_inlineDependencyMap,
+        unstable_getAsyncDependencyPath,
       }),
     ]);
 }
-
-module.exports = processModules;

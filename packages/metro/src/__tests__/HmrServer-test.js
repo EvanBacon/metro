@@ -9,24 +9,27 @@
  * @oncall react_native
  */
 
-import type {TransformResultDependency} from '../DeltaBundler/types.flow';
+import type {TransformResultDependency} from '../DeltaBundler/types';
 import type {Client} from '../HmrServer';
-import type {HmrClientMessage} from 'metro-runtime/src/modules/types.flow';
+import type {InputConfigT} from 'metro-config';
+import type {HmrClientMessage} from 'metro-runtime/src/modules/types';
 
 import DeltaBundler from '../DeltaBundler';
+import HmrServer from '../HmrServer';
 import IncrementalBundler from '../IncrementalBundler';
-import EventEmitter from 'events';
+import getGraphId from '../lib/getGraphId';
 import {mergeConfig} from 'metro-config';
+import EventEmitter from 'node:events';
 
-const HmrServer = require('../HmrServer');
-const getGraphId = require('../lib/getGraphId');
-const {getDefaultValues} = require('metro-config/src/defaults');
+const {
+  getDefaultConfig: {getDefaultValues},
+} = require('metro-config');
 
 jest.mock('../lib/transformHelpers', () => ({
   getResolveDependencyFn:
     () => (from: string, to: TransformResultDependency) => ({
       type: 'sourceFile',
-      filePath: `${require('path').resolve(from, to.name)}.js`,
+      filePath: `${require('node:path').resolve(from, to.name)}.js`,
     }),
 }));
 
@@ -139,7 +142,7 @@ describe('HmrServer', () => {
           return requrl;
         },
       },
-    });
+    } as InputConfigT);
 
     incrementalBundlerMock = new IncrementalBundler(config);
     jest
@@ -163,8 +166,12 @@ describe('HmrServer', () => {
     // $FlowFixMe[underconstrained-implicit-instantiation]
     hmrServer = new HmrServer(incrementalBundlerMock, id, config);
 
-    connect = async (relativeUrl: string, sendFn?: string => void) => {
-      const absoluteUrl = 'ws://localhost/' + relativeUrl;
+    connect = async (
+      relativeUrl: string,
+      sendFn?: string => void,
+      {baseUrl = 'ws://localhost'}: {baseUrl?: string} = {},
+    ) => {
+      const absoluteUrl = baseUrl + relativeUrl;
       const client = await hmrServer.onClientConnect(
         absoluteUrl,
         sendFn || jest.fn(),
@@ -193,7 +200,7 @@ describe('HmrServer', () => {
     };
   });
 
-  it('should retrieve the correct graph from the incremental bundler (graphId)', async () => {
+  test('should retrieve the correct graph from the incremental bundler (graphId)', async () => {
     await connect('/hot?bundleEntry=EntryPoint.js&platform=ios');
 
     expect(getRevisionByGraphIdMock).toBeCalledWith(
@@ -202,7 +209,6 @@ describe('HmrServer', () => {
         {
           customTransformOptions: {},
           dev: true,
-          hot: true,
           minify: false,
           platform: 'ios',
           type: 'module',
@@ -220,7 +226,45 @@ describe('HmrServer', () => {
     );
   });
 
-  it('should retrieve the correct graph when there are extra params', async () => {
+  test('should retrieve for relative urls without host and protocol', async () => {
+    expect(
+      connect('/hot?bundleEntry=EntryPoint.js&platform=ios', undefined, {
+        baseUrl: '',
+      }),
+    ).rejects.toThrowError(
+      'Expecting the request url to have a valid protocol, e.g. "http://", "https://", or "//"',
+    );
+  });
+
+  test('should retrieve for non standard protocols', async () => {
+    await connect('/hot?bundleEntry=EntryPoint.js&platform=ios', undefined, {
+      baseUrl: 'foo://localhost',
+    });
+
+    expect(getRevisionByGraphIdMock).toBeCalledWith(
+      getGraphId(
+        '/root/EntryPoint.js',
+        {
+          customTransformOptions: {},
+          dev: true,
+          minify: false,
+          platform: 'ios',
+          type: 'module',
+          unstable_transformProfile: 'default',
+        },
+        {
+          shallow: false,
+          lazy: false,
+          unstable_allowRequireContext: false,
+          resolverOptions: {
+            dev: true,
+          },
+        },
+      ),
+    );
+  });
+
+  test('should retrieve the correct graph when there are extra params', async () => {
     await connect(
       '/hot?bundleEntry=EntryPoint.js&platform=ios&unusedExtraParam=42',
     );
@@ -231,7 +275,6 @@ describe('HmrServer', () => {
         {
           customTransformOptions: {},
           dev: true,
-          hot: true,
           minify: false,
           platform: 'ios',
           type: 'module',
@@ -249,7 +292,7 @@ describe('HmrServer', () => {
     );
   });
 
-  it('should rewrite URLs before retrieving the graph', async () => {
+  test('should rewrite URLs before retrieving the graph', async () => {
     await connect(
       '/hot?bundleEntry=Entry__REMOVE_THIS_WHEN_REWRITING__Point.js&platform=ios',
     );
@@ -260,7 +303,6 @@ describe('HmrServer', () => {
         {
           customTransformOptions: {},
           dev: true,
-          hot: true,
           minify: false,
           platform: 'ios',
           type: 'module',
@@ -278,7 +320,7 @@ describe('HmrServer', () => {
     );
   });
 
-  it('should send an error message when the graph cannot be found', async () => {
+  test('should send an error message when the graph cannot be found', async () => {
     const sendMessage = jest.fn();
     getRevisionByGraphIdMock.mockReturnValueOnce(undefined);
 
@@ -289,7 +331,6 @@ describe('HmrServer', () => {
       {
         customTransformOptions: {},
         dev: true,
-        hot: true,
         minify: false,
         platform: 'ios',
         type: 'module',
@@ -314,7 +355,7 @@ describe('HmrServer', () => {
     });
   });
 
-  it('should send an initial update when a client connects', async () => {
+  test('should send an initial update when a client connects', async () => {
     const sendMessage = jest.fn();
 
     updateGraphMock.mockResolvedValue({
@@ -347,7 +388,7 @@ describe('HmrServer', () => {
                 id('/root/hi'),
                 '__d(function() { alert("hi"); },' +
                   id('/root/hi') +
-                  ',[],"hi",{});\n' +
+                  ',null,"hi",{});\n' +
                   '//# sourceMappingURL=http://localhost/hi.map?platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n' +
                   '//# sourceURL=http://localhost/hi.bundle//&platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n',
               ],
@@ -369,7 +410,7 @@ describe('HmrServer', () => {
     ]);
   });
 
-  it('should send the same update to all connected clients', async () => {
+  test('should send the same update to all connected clients', async () => {
     const sendMessage1 = jest.fn();
     const sendMessage2 = jest.fn();
 
@@ -431,7 +472,7 @@ describe('HmrServer', () => {
                 id('/root/hi'),
                 '__d(function() { alert("hi"); },' +
                   id('/root/hi') +
-                  ',[],"hi",{});\n' +
+                  ',null,"hi",{});\n' +
                   '//# sourceMappingURL=http://localhost/hi.map?platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n' +
                   '//# sourceURL=http://localhost/hi.bundle//&platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n',
               ],
@@ -452,7 +493,7 @@ describe('HmrServer', () => {
     expect(messages1).toEqual(messages2);
   });
 
-  it('should return the correctly formatted HMR message after a file change', async () => {
+  test('should return the correctly formatted HMR message after a file change', async () => {
     const sendMessage = jest.fn();
 
     await connect('/hot?bundleEntry=EntryPoint.js&platform=ios', sendMessage);
@@ -490,7 +531,7 @@ describe('HmrServer', () => {
                 id('/root/hi'),
                 '__d(function() { alert("hi"); },' +
                   id('/root/hi') +
-                  ',[],"hi",{});\n' +
+                  ',null,"hi",{});\n' +
                   '//# sourceMappingURL=http://localhost/hi.map?platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n' +
                   '//# sourceURL=http://localhost/hi.bundle//&platform=ios&dev=true&minify=false&modulesOnly=true&runModule=false&shallow=true\n',
               ],
@@ -507,7 +548,7 @@ describe('HmrServer', () => {
     ]);
   });
 
-  it('should propagate extra params to module URLs', async () => {
+  test('should propagate extra params to module URLs', async () => {
     const sendMessage = jest.fn();
 
     await connect(
@@ -558,7 +599,7 @@ describe('HmrServer', () => {
     ]);
   });
 
-  it('should propagate rewritten URL params to module URLs', async () => {
+  test('should propagate rewritten URL params to module URLs', async () => {
     const sendMessage = jest.fn();
 
     await connect(
@@ -609,7 +650,7 @@ describe('HmrServer', () => {
     ]);
   });
 
-  it('should return error messages when there is a transform error', async () => {
+  test('should return error messages when there is a transform error', async () => {
     jest.useRealTimers();
     const sendMessage = jest.fn();
 
@@ -654,6 +695,6 @@ describe('HmrServer', () => {
 });
 
 class TransformError extends SyntaxError {
-  +type: string = 'TransformError';
+  readonly type: string = 'TransformError';
   filename: string;
 }

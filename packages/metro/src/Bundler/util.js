@@ -9,24 +9,22 @@
  * @oncall react_native
  */
 
-'use strict';
-
 import type {AssetDataFiltered, AssetDataWithoutFiles} from '../Assets';
-import type {ModuleTransportLike} from '../shared/types.flow';
+import type {ModuleTransportLike} from '../shared/types';
 import type {File} from '@babel/types';
 
-const babylon = require('@babel/parser');
-const template = require('@babel/template').default;
-const babelTypes = require('@babel/types');
+import * as babylon from '@babel/parser';
+import template from '@babel/template';
+import * as babelTypes from '@babel/types';
 
-type SubTree<T: ModuleTransportLike> = (
+type SubTree<T extends ModuleTransportLike> = (
   moduleTransport: T,
   moduleTransportsByPath: Map<string, T>,
 ) => Iterable<number>;
 
 const assetPropertyBlockList = new Set(['files', 'fileSystemLocation', 'path']);
 
-function generateAssetCodeFileAst(
+export function generateAssetCodeFileAst(
   assetRegistryPath: string,
   assetDescriptor: AssetDataWithoutFiles,
 ): File {
@@ -68,9 +66,9 @@ function filterObject(
   return copied;
 }
 
-function createRamBundleGroups<T: ModuleTransportLike>(
-  ramGroups: $ReadOnlyArray<string>,
-  groupableModules: $ReadOnlyArray<T>,
+export function createRamBundleGroups<T extends ModuleTransportLike>(
+  ramGroups: ReadonlyArray<string>,
+  groupableModules: ReadonlyArray<T>,
   subtree: SubTree<T>,
 ): Map<number, Set<number>> {
   // build two maps that allow to lookup module data
@@ -125,7 +123,7 @@ function createRamBundleGroups<T: ModuleTransportLike>(
   return result;
 }
 
-function* filter<A: number, B: number>(
+function* filter<A extends number, B extends number>(
   iterator: ArrayMap<A, B>,
   predicate: ([A, Array<B>]) => boolean,
 ): Generator<[A, Array<B>], void, void> {
@@ -146,8 +144,3 @@ class ArrayMap<K, V> extends Map<K, Array<V>> {
     return array;
   }
 }
-
-module.exports = {
-  createRamBundleGroups,
-  generateAssetCodeFileAst,
-};

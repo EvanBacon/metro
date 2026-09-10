@@ -51,15 +51,8 @@ const siteConfig = {
   url: 'https://metrobundler.dev',
   baseUrl: '/',
   favicon: 'img/favicon.png',
+  onBrokenAnchors: 'throw',
   themeConfig: {
-    announcementBar: {
-      id: 'support_ukraine',
-      content:
-        'Support Ukraine 🇺🇦 <a target="_blank" rel="noopener noreferrer" href="https://opensource.facebook.com/support-ukraine"> Help Provide Humanitarian Aid to Ukraine</a>.',
-      backgroundColor: '#20232a',
-      textColor: '#fff',
-      isCloseable: false,
-    },
     navbar: {
       title: 'Metro',
       logo: {
@@ -142,7 +135,7 @@ const siteConfig = {
       indexName: 'metro',
     },
     prism: {
-      additionalLanguages: ['flow'],
+      additionalLanguages: ['flow', 'bash', 'json', 'diff'],
     },
   },
   scripts: ['https://buttons.github.io/buttons.js'],

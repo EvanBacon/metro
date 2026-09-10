@@ -4,52 +4,52 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
+ * @flow strict-local
  * @format
- * @flow
  */
 
-'use strict';
-
-import type IncrementalBundler, {RevisionId} from './IncrementalBundler';
-import type {GraphOptions} from './shared/types.flow';
+import type {
+  RevisionId,
+  default as IncrementalBundler,
+} from './IncrementalBundler';
+import type {GraphOptions} from './shared/types';
 import type {ConfigT, RootPerfLogger} from 'metro-config';
 import type {
   HmrClientMessage,
   HmrErrorMessage,
   HmrMessage,
   HmrUpdateMessage,
-} from 'metro-runtime/src/modules/types.flow';
-import type {UrlWithParsedQuery} from 'url';
+} from 'metro-runtime/src/modules/types';
 
-const hmrJSBundle = require('./DeltaBundler/Serializers/hmrJSBundle');
-const GraphNotFoundError = require('./IncrementalBundler/GraphNotFoundError');
-const RevisionNotFoundError = require('./IncrementalBundler/RevisionNotFoundError');
-const debounceAsyncQueue = require('./lib/debounceAsyncQueue');
-const formatBundlingError = require('./lib/formatBundlingError');
-const getGraphId = require('./lib/getGraphId');
-const parseOptionsFromUrl = require('./lib/parseOptionsFromUrl');
-const splitBundleOptions = require('./lib/splitBundleOptions');
-const transformHelpers = require('./lib/transformHelpers');
-const {
-  Logger: {createActionStartEntry, createActionEndEntry, log},
-} = require('metro-core');
-const nullthrows = require('nullthrows');
-const url = require('url');
+import hmrJSBundle from './DeltaBundler/Serializers/hmrJSBundle';
+import GraphNotFoundError from './IncrementalBundler/GraphNotFoundError';
+import RevisionNotFoundError from './IncrementalBundler/RevisionNotFoundError';
+import debounceAsyncQueue from './lib/debounceAsyncQueue';
+import formatBundlingError from './lib/formatBundlingError';
+import getGraphId from './lib/getGraphId';
+import parseBundleOptionsFromBundleRequestUrl from './lib/parseBundleOptionsFromBundleRequestUrl';
+import splitBundleOptions from './lib/splitBundleOptions';
+import * as transformHelpers from './lib/transformHelpers';
+import debugModule from 'debug';
+import {Logger} from 'metro-core';
+import nullthrows from 'nullthrows';
 
-export type EntryPointURL = UrlWithParsedQuery;
+const debug = debugModule('Metro:HMR');
+
+const {createActionStartEntry, createActionEndEntry, log} = Logger;
 
 export type Client = {
   optedIntoHMR: boolean,
   revisionIds: Array<RevisionId>,
-  +sendFn: string => void,
+  readonly sendFn: string => void,
 };
 
 type ClientGroup = {
-  +clients: Set<Client>,
-  clientUrl: EntryPointURL,
+  readonly clients: Set<Client>,
+  clientUrl: URL,
   revisionId: RevisionId,
-  +unlisten: () => void,
-  +graphOptions: GraphOptions,
+  readonly unlisten: () => void,
+  readonly graphOptions: GraphOptions,
 };
 
 function send(sendFns: Array<(string) => void>, message: HmrMessage): void {
@@ -66,7 +66,7 @@ function send(sendFns: Array<(string) => void>, message: HmrMessage): void {
  * getting connected, disconnected or having errors (through the
  * `onClientConnect`, `onClientDisconnect` and `onClientError` methods).
  */
-class HmrServer<TClient: Client> {
+export default class HmrServer<TClient extends Client> {
   _config: ConfigT;
   _bundler: IncrementalBundler;
   _createModuleId: (path: string) => number;
@@ -96,15 +96,19 @@ class HmrServer<TClient: Client> {
 
   async _registerEntryPoint(
     client: Client,
-    requestUrl: string,
+    originalRequestUrl: string,
     sendFn: (data: string) => void,
   ): Promise<void> {
-    requestUrl = this._config.server.rewriteRequestUrl(requestUrl);
-    const clientUrl = nullthrows(url.parse(requestUrl, true));
-    const options = parseOptionsFromUrl(
-      requestUrl,
-      new Set(this._config.resolver.platforms),
-    );
+    debug('Registering entry point: %s', originalRequestUrl);
+    const requestUrl =
+      this._config.server.rewriteRequestUrl(originalRequestUrl);
+    debug('Rewritten as: %s', requestUrl);
+
+    const {bundleType: _bundleType, ...options} =
+      parseBundleOptionsFromBundleRequestUrl(
+        requestUrl,
+        new Set(this._config.resolver.platforms),
+      );
     const {entryFile, resolverOptions, transformOptions, graphOptions} =
       splitBundleOptions(options);
 
@@ -125,6 +129,7 @@ class HmrServer<TClient: Client> {
         data: {
           key: entryFile,
           asyncType: null,
+          isESMImport: false,
           locs: [],
         },
       },
@@ -152,28 +157,22 @@ class HmrServer<TClient: Client> {
     if (clientGroup != null) {
       clientGroup.clients.add(client);
     } else {
+      const clientUrl = new URL(requestUrl);
+
       // Prepare the clientUrl to be used as sourceUrl in HMR updates.
       clientUrl.protocol = 'http';
-      const {
-        dev,
-        minify,
-        runModule,
-        bundleEntry: _bundleEntry,
-        ...query
-      } = clientUrl.query || {};
-      clientUrl.query = {
-        ...query,
-        dev: dev || 'true',
-        minify: minify || 'false',
-        modulesOnly: 'true',
-        runModule: runModule || 'false',
-        shallow: 'true',
-      };
-      clientUrl.search = '';
+
+      const clientQuery = clientUrl.searchParams;
+      clientQuery.delete('bundleEntry');
+      clientQuery.set('dev', clientQuery.get('dev') || 'true');
+      clientQuery.set('minify', clientQuery.get('minify') || 'false');
+      clientQuery.set('modulesOnly', 'true');
+      clientQuery.set('runModule', clientQuery.get('runModule') || 'false');
+      clientQuery.set('shallow', 'true');
 
       clientGroup = {
         clients: new Set([client]),
-        clientUrl,
+        clientUrl: new URL(clientUrl),
         revisionId: id,
         graphOptions,
         unlisten: (): void => unlisten(),
@@ -181,21 +180,23 @@ class HmrServer<TClient: Client> {
 
       this._clientGroups.set(id, clientGroup);
 
-      let latestEventArgs: Array<any> = [];
+      let latestChangeEvent: ?{
+        readonly logger: ?RootPerfLogger,
+        readonly changeId: string,
+      } = null;
 
       const debounceCallHandleFileChange = debounceAsyncQueue(async () => {
         await this._handleFileChange(
           nullthrows(clientGroup),
           {isInitialUpdate: false},
-          ...latestEventArgs,
+          latestChangeEvent,
         );
       }, 50);
 
       const unlisten = this._bundler
         .getDeltaBundler()
-        // $FlowFixMe[missing-local-annot]
-        .listen(graph, async (...args) => {
-          latestEventArgs = args;
+        .listen(graph, async changeEvent => {
+          latestChangeEvent = changeEvent;
           await debounceCallHandleFileChange();
         });
     }
@@ -240,6 +241,10 @@ class HmrServer<TClient: Client> {
         case 'log-opt-in':
           client.optedIntoHMR = true;
           break;
+        case 'heartbeat':
+          debug('Heartbeat received');
+          sendFn(String(message));
+          break;
         default:
           break;
       }
@@ -247,10 +252,10 @@ class HmrServer<TClient: Client> {
     return Promise.resolve();
   };
 
-  onClientError: (client: TClient, e: ErrorEvent) => void = (client, e) => {
+  onClientError: (client: TClient, e: Error) => void = (client, e) => {
     this._config.reporter.update({
       type: 'hmr_client_error',
-      error: e.error,
+      error: e,
     });
     this.onClientDisconnect(client);
   };
@@ -273,7 +278,8 @@ class HmrServer<TClient: Client> {
     group: ClientGroup,
     options: {isInitialUpdate: boolean},
     changeEvent: ?{
-      logger: ?RootPerfLogger,
+      readonly logger: ?RootPerfLogger,
+      readonly changeId?: string,
     },
   ): Promise<void> {
     const logger = !options.isInitialUpdate ? changeEvent?.logger : null;
@@ -308,7 +314,10 @@ class HmrServer<TClient: Client> {
 
     const message = await this._prepareMessage(group, options, changeEvent);
     send(sendFns, message);
-    send(sendFns, {type: 'update-done'});
+    send(sendFns, {
+      type: 'update-done',
+      body: {changeId: changeEvent?.changeId},
+    });
 
     log({
       ...createActionEndEntry(processingHmrChange),
@@ -328,7 +337,8 @@ class HmrServer<TClient: Client> {
     group: ClientGroup,
     options: {isInitialUpdate: boolean},
     changeEvent: ?{
-      logger: ?RootPerfLogger,
+      readonly logger: ?RootPerfLogger,
+      readonly changeId?: string,
     },
   ): Promise<HmrUpdateMessage | HmrErrorMessage> {
     const logger = !options.isInitialUpdate ? changeEvent?.logger : null;
@@ -365,7 +375,7 @@ class HmrServer<TClient: Client> {
       logger?.point('serialize_start');
 
       const hmrUpdate = hmrJSBundle(delta, revision.graph, {
-        clientUrl: group.clientUrl,
+        clientUrl: new URL(group.clientUrl),
         createModuleId: this._createModuleId,
         includeAsyncPaths: group.graphOptions.lazy,
         projectRoot: this._config.projectRoot,
@@ -392,5 +402,3 @@ class HmrServer<TClient: Client> {
     }
   }
 }
-
-module.exports = HmrServer;

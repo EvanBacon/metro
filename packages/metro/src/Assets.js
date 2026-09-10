@@ -4,60 +4,55 @@
  * This source code is licensed under the MIT license found in the
  * LICENSE file in the root directory of this source tree.
  *
- * @flow
+ * @flow strict-local
  * @format
  * @oncall react_native
  */
 
-'use strict';
-
 import type {AssetPath} from './node-haste/lib/AssetPaths';
 
-const AssetPaths = require('./node-haste/lib/AssetPaths');
-const crypto = require('crypto');
-const denodeify = require('denodeify');
-const fs = require('fs');
-const getImageSize = require('image-size');
-const path = require('path');
-
-const readDir = denodeify(fs.readdir);
-const readFile = denodeify(fs.readFile);
+import {getImageDimensions} from './lib/imageSize';
+import {normalizePathSeparatorsToPosix} from './lib/pathUtils';
+import * as AssetPaths from './node-haste/lib/AssetPaths';
+import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 
 export type AssetInfo = {
-  +files: Array<string>,
-  +hash: string,
-  +name: string,
-  +scales: Array<number>,
-  +type: string,
+  readonly files: Array<string>,
+  readonly hash: string,
+  readonly name: string,
+  readonly scales: Array<number>,
+  readonly type: string,
 };
 
 export type AssetDataWithoutFiles = {
-  +__packager_asset: boolean,
-  +fileSystemLocation: string,
-  +hash: string,
-  +height: ?number,
-  +httpServerLocation: string,
-  +name: string,
-  +scales: Array<number>,
-  +type: string,
-  +width: ?number,
+  readonly __packager_asset: boolean,
+  readonly fileSystemLocation: string,
+  readonly hash: string,
+  readonly height: ?number,
+  readonly httpServerLocation: string,
+  readonly name: string,
+  readonly scales: Array<number>,
+  readonly type: string,
+  readonly width: ?number,
   ...
 };
 export type AssetDataFiltered = {
-  +__packager_asset: boolean,
-  +hash: string,
-  +height: ?number,
-  +httpServerLocation: string,
-  +name: string,
-  +scales: Array<number>,
-  +type: string,
-  +width: ?number,
+  readonly __packager_asset: boolean,
+  readonly hash: string,
+  readonly height: ?number,
+  readonly httpServerLocation: string,
+  readonly name: string,
+  readonly scales: Array<number>,
+  readonly type: string,
+  readonly width: ?number,
   ...
 };
 
-// Test extension against all types supported by image-size module.
-// If it's not one of these, we won't treat it as an image.
-function isAssetTypeAnImage(type: string): boolean {
+// If an extension isn't explicitly supported here, we won't treat it as an
+// image.
+export function isAssetTypeAnImage(type: string): boolean {
   return (
     [
       'png',
@@ -74,49 +69,32 @@ function isAssetTypeAnImage(type: string): boolean {
   );
 }
 
-function getAssetSize(
+export function getAssetSize(
   type: string,
   content: Buffer,
   filePath: string,
-): ?{+width: number, +height: number} {
+): ?{readonly width: number, readonly height: number} {
   if (!isAssetTypeAnImage(type)) {
     return null;
   }
   if (content.length === 0) {
     throw new Error(`Image asset \`${filePath}\` cannot be an empty file.`);
   }
-  const {width, height} = getImageSize(content);
-  return {width, height};
+  return getImageDimensions(type, content, filePath);
 }
 
-export type AssetData = AssetDataWithoutFiles & {+files: Array<string>, ...};
+export type AssetData = AssetDataWithoutFiles & {
+  readonly files: Array<string>,
+  ...
+};
 
 export type AssetDataPlugin = (
   assetData: AssetData,
 ) => AssetData | Promise<AssetData>;
 
-const hashFiles = denodeify(function hashFilesCb(files, hash, callback): void {
-  if (!files.length) {
-    callback(null);
-    return;
-  }
-
-  const file = files.shift();
-
-  fs.readFile(file, (err, data: Buffer) => {
-    if (err) {
-      callback(err);
-      return;
-    } else {
-      hash.update(data);
-      hashFilesCb(files, hash, callback);
-    }
-  });
-});
-
 function buildAssetMap(
   dir: string,
-  files: $ReadOnlyArray<string>,
+  files: ReadonlyArray<string>,
   platform: ?string,
 ): Map<string, {files: Array<string>, scales: Array<number>}> {
   const platforms = new Set(platform != null ? [platform] : []);
@@ -168,7 +146,7 @@ async function getAbsoluteAssetRecord(
 ): Promise<{files: Array<string>, scales: Array<number>}> {
   const filename = path.basename(assetPath);
   const dir = path.dirname(assetPath);
-  const files = await readDir(dir);
+  const files = await fs.promises.readdir(dir);
 
   const assetData = AssetPaths.parse(
     filename,
@@ -200,7 +178,7 @@ async function getAbsoluteAssetRecord(
 async function getAbsoluteAssetInfo(
   assetPath: string,
   platform: ?string = null,
-): Promise<AssetInfo> {
+): Promise<{assetInfo: AssetInfo, firstFileContent: Buffer}> {
   const nameData = AssetPaths.parse(
     assetPath,
     new Set(platform != null ? [platform] : []),
@@ -210,18 +188,25 @@ async function getAbsoluteAssetInfo(
   const {scales, files} = await getAbsoluteAssetRecord(assetPath, platform);
   const hasher = crypto.createHash('md5');
 
-  if (files.length > 0) {
-    await hashFiles(Array.from(files), hasher);
+  const fileData = await Promise.all(
+    files.map(file => fs.promises.readFile(file)),
+  );
+
+  for (const data of fileData) {
+    hasher.update(data);
   }
 
-  return {files, hash: hasher.digest('hex'), name, scales, type};
+  return {
+    assetInfo: {files, hash: hasher.digest('hex'), name, scales, type},
+    firstFileContent: fileData[0],
+  };
 }
 
-async function getAssetData(
+export async function getAssetData(
   assetPath: string,
   localPath: string,
-  assetDataPlugins: $ReadOnlyArray<string>,
-  platform: ?string = null,
+  assetDataPlugins: ReadonlyArray<string>,
+  platform: ?string,
   publicPath: string,
 ): Promise<AssetData> {
   // If the path of the asset is outside of the projectRoot, we don't want to
@@ -232,17 +217,15 @@ async function getAssetData(
     : path.join(publicPath, path.dirname(localPath));
 
   // On Windows, change backslashes to slashes to get proper URL path from file path.
-  if (path.sep === '\\') {
-    assetUrlPath = assetUrlPath.replaceAll('\\', '/');
-  }
+  assetUrlPath = normalizePathSeparatorsToPosix(assetUrlPath);
 
-  const isImage = isAssetTypeAnImage(path.extname(assetPath).slice(1));
-  const assetInfo = await getAbsoluteAssetInfo(assetPath, platform);
-
-  const isImageInput = assetInfo.files[0].includes('.zip/')
-    ? fs.readFileSync(assetInfo.files[0])
-    : assetInfo.files[0];
-  const dimensions = isImage ? getImageSize(isImageInput) : null;
+  const {assetInfo, firstFileContent} = await getAbsoluteAssetInfo(
+    assetPath,
+    platform ?? null,
+  );
+  const dimensions = isAssetTypeAnImage(assetInfo.type)
+    ? getAssetSize(assetInfo.type, firstFileContent, assetInfo.files[0])
+    : null;
   const scale = assetInfo.scales[0];
 
   const assetData = {
@@ -261,7 +244,7 @@ async function getAssetData(
 }
 
 async function applyAssetDataPlugins(
-  assetDataPlugins: $ReadOnlyArray<string>,
+  assetDataPlugins: ReadonlyArray<string>,
   assetData: AssetData,
 ): Promise<AssetData> {
   if (!assetDataPlugins.length) {
@@ -269,8 +252,11 @@ async function applyAssetDataPlugins(
   }
 
   const [currentAssetPlugin, ...remainingAssetPlugins] = assetDataPlugins;
-  // $FlowFixMe: impossible to type a dynamic require.
-  const assetPluginFunction: AssetDataPlugin = require(currentAssetPlugin);
+  // $FlowFixMe[unsupported-syntax]: impossible to type a dynamic require.
+  const mod = require(currentAssetPlugin);
+  const assetPluginFunction: AssetDataPlugin =
+    mod.__esModule === true && 'default' in mod ? mod.default : mod;
+
   const resultAssetData = await assetPluginFunction(assetData);
   return await applyAssetDataPlugins(remainingAssetPlugins, resultAssetData);
 }
@@ -278,7 +264,7 @@ async function applyAssetDataPlugins(
 /**
  * Returns all the associated files (for different resolutions) of an asset.
  **/
-async function getAssetFiles(
+export async function getAssetFiles(
   assetPath: string,
   platform: ?string = null,
 ): Promise<Array<string>> {
@@ -298,12 +284,13 @@ async function getAssetFiles(
  * 3. Then try to pick platform-specific asset records
  * 4. Then pick the closest resolution (rounding up) to the requested one
  */
-async function getAsset(
+export async function getAsset(
   relativePath: string,
   projectRoot: string,
-  watchFolders: $ReadOnlyArray<string>,
-  platform: ?string = null,
-  assetExts: $ReadOnlyArray<string>,
+  watchFolders: ReadonlyArray<string>,
+  platform: ?string,
+  assetExts: ReadonlyArray<string>,
+  fileExistsInFileMap?: (absolutePath: string) => boolean,
 ): Promise<Buffer> {
   const assetData = AssetPaths.parse(
     relativePath,
@@ -318,26 +305,42 @@ async function getAsset(
     );
   }
 
-  if (!pathBelongsToRoots(absolutePath, [projectRoot, ...watchFolders])) {
+  // NOTE: If fileExistsInFileMap is not provided, we fall back to pathBelongsToRoots for backward compatibility, as getAsset is part of the public API.
+  if (
+    fileExistsInFileMap == null &&
+    !pathBelongsToRoots(absolutePath, [projectRoot, ...watchFolders])
+  ) {
     throw new Error(
       `'${relativePath}' could not be found, because it cannot be found in the project root or any watch folder`,
     );
   }
 
-  const record = await getAbsoluteAssetRecord(absolutePath, platform);
+  const record = await getAbsoluteAssetRecord(absolutePath, platform ?? null);
 
   for (let i = 0; i < record.scales.length; i++) {
     if (record.scales[i] >= assetData.resolution) {
-      return readFile(record.files[i]);
+      if (
+        fileExistsInFileMap != null &&
+        !fileExistsInFileMap(record.files[i])
+      ) {
+        continue;
+      }
+      return fs.promises.readFile(record.files[i]);
     }
   }
 
-  return readFile(record.files[record.files.length - 1]);
+  const lastFile = record.files[record.files.length - 1];
+  if (fileExistsInFileMap != null && !fileExistsInFileMap(lastFile)) {
+    throw new Error(
+      `'${relativePath}' could not be found, because it is not within the projectRoot or watchFolders, or it is blocked via the resolver.blockList config`,
+    );
+  }
+  return fs.promises.readFile(lastFile);
 }
 
 function pathBelongsToRoots(
   pathToCheck: string,
-  roots: $ReadOnlyArray<string>,
+  roots: ReadonlyArray<string>,
 ): boolean {
   for (const rootFolder of roots) {
     if (pathToCheck.startsWith(path.resolve(rootFolder))) {
@@ -347,11 +350,3 @@ function pathBelongsToRoots(
 
   return false;
 }
-
-module.exports = {
-  getAsset,
-  getAssetSize,
-  getAssetData,
-  getAssetFiles,
-  isAssetTypeAnImage,
-};

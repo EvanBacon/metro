@@ -8,12 +8,10 @@
  * @oncall react_native
  */
 
-'use strict';
-
 jest.mock('../../../Assets');
 
-const {getAssetFiles} = require('../../../Assets');
-const getAllFiles = require('../getAllFiles');
+import {getAssetFiles} from '../../../Assets';
+import getAllFiles from '../getAllFiles';
 
 describe('getOrderedDependencyPaths', () => {
   beforeEach(() => {
@@ -23,7 +21,7 @@ describe('getOrderedDependencyPaths', () => {
     ]);
   });
 
-  it('Should return all module dependencies correctly', async () => {
+  test('Should return all module dependencies correctly', async () => {
     const graph = {
       dependencies: new Map([
         [
@@ -104,7 +102,7 @@ describe('getOrderedDependencyPaths', () => {
     ]);
   });
 
-  it('Should add assets data dependencies correctly', async () => {
+  test('Should add assets data dependencies correctly', async () => {
     const graph = {
       dependencies: new Map([
         [

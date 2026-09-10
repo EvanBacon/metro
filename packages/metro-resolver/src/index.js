@@ -9,8 +9,6 @@
  * @oncall react_native
  */
 
-'use strict';
-
 export type {
   AssetFileResolution,
   CustomResolutionContext,
@@ -20,19 +18,25 @@ export type {
   FileAndDirCandidates,
   FileCandidates,
   FileResolution,
-  GetRealPath,
+  FileSystemLookup,
   ResolutionContext,
   Resolution,
   ResolveAsset,
   Result,
 } from './types';
 
-const Resolver = {
-  FailedToResolveNameError: require('./errors/FailedToResolveNameError'),
-  FailedToResolvePathError: require('./errors/FailedToResolvePathError'),
-  formatFileCandidates: require('./errors/formatFileCandidates'),
-  InvalidPackageError: require('./errors/InvalidPackageError'),
-  resolve: require('./resolve'),
-};
+import FailedToResolveNameError from './errors/FailedToResolveNameError';
+import FailedToResolvePathError from './errors/FailedToResolvePathError';
+import FailedToResolveUnsupportedError from './errors/FailedToResolveUnsupportedError';
+import formatFileCandidates from './errors/formatFileCandidates';
+import InvalidPackageError from './errors/InvalidPackageError';
+import resolve from './resolve';
 
-module.exports = Resolver;
+export {
+  FailedToResolveNameError,
+  FailedToResolvePathError,
+  FailedToResolveUnsupportedError,
+  formatFileCandidates,
+  InvalidPackageError,
+  resolve,
+};

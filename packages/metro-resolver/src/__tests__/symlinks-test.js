@@ -9,14 +9,11 @@
  * @oncall react_native
  */
 
-'use strict';
-
 import type {ResolutionContext} from '../index';
 
+import FailedToResolvePathError from '../errors/FailedToResolvePathError';
+import * as Resolver from '../index';
 import {createResolutionContext} from './utils';
-
-const FailedToResolvePathError = require('../errors/FailedToResolvePathError');
-const Resolver = require('../index');
 
 const fileMap = {
   '/root/project/foo.js': '',
@@ -26,18 +23,18 @@ const fileMap = {
 };
 
 const CONTEXT: ResolutionContext = {
-  ...createResolutionContext(fileMap, {enableSymlinks: true}),
+  ...createResolutionContext(fileMap),
   originModulePath: '/root/project/foo.js',
 };
 
-it('resolves to a real path when the chosen candidate is a symlink', () => {
+test('resolves to a real path when the chosen candidate is a symlink', () => {
   expect(Resolver.resolve(CONTEXT, './link-to-foo', null)).toEqual({
     type: 'sourceFile',
     filePath: '/root/project/foo.js',
   });
 });
 
-it('does not resolve to a broken symlink', () => {
+test('does not resolve to a broken symlink', () => {
   // ./baz.js is a broken link, baz/index.js is real
   expect(() => Resolver.resolve(CONTEXT, './baz.js', null)).toThrow(
     FailedToResolvePathError,

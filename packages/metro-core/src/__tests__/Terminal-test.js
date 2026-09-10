@@ -10,13 +10,18 @@
 
 'use strict';
 
-jest.mock('readline', () => ({
-  moveCursor: (stream, dx, dy) => {
+const Terminal = require('../Terminal').default;
+
+jest.useRealTimers();
+
+jest.mock('node:readline', () => ({
+  moveCursor: (stream, dx, dy, callback = () => {}) => {
     const {cursor, columns} = stream;
     stream.cursor =
       Math.max(cursor - (cursor % columns), cursor + dx) + dy * columns;
+    setTimeout(callback, 33);
   },
-  clearLine: (stream, dir) => {
+  clearLine: (stream, dir, callback = () => {}) => {
     if (dir !== 0) {
       throw new Error('unsupported');
     }
@@ -26,92 +31,165 @@ jest.mock('readline', () => ({
     for (var i = curLine; i < nextLine; ++i) {
       stream.buffer[i] = ' ';
     }
+    setTimeout(callback, 33);
+  },
+  clearScreenDown: (stream, callback = () => {}) => {
+    const {cursor, columns, lines} = stream;
+    const curLine = cursor - (cursor % columns);
+    for (var i = curLine; i < columns * lines; ++i) {
+      stream.buffer[i] = ' ';
+    }
+    setTimeout(callback, 33);
   },
 }));
 
-describe('Terminal', () => {
-  beforeEach(() => {
-    jest.resetModules();
-  });
-
-  function prepare(isTTY) {
-    const Terminal = require('../Terminal');
-    const lines = 10;
-    const columns = 10;
-    const stream = Object.create(
-      isTTY ? require('tty').WriteStream.prototype : require('net').Socket,
-    );
-    Object.assign(stream, {
-      cursor: 0,
-      buffer: ' '.repeat(columns * lines).split(''),
-      columns,
-      lines,
-      write(str) {
-        for (let i = 0; i < str.length; ++i) {
-          if (str[i] === '\n') {
-            this.cursor = this.cursor - (this.cursor % columns) + columns;
-          } else {
-            this.buffer[this.cursor] = str[i];
-            ++this.cursor;
+describe.each([false, true])(
+  'Terminal, TTY print allowed: %s',
+  (ttyPrint: boolean) => {
+    function prepare({isTTY, ttyPrint}) {
+      const lines = 10;
+      const columns = 10;
+      const stream = Object.create(
+        isTTY
+          ? require('node:tty').WriteStream.prototype
+          : require('node:net').Socket,
+      );
+      Object.assign(stream, {
+        cursor: 0,
+        buffer: ' '.repeat(columns * lines).split(''),
+        columns,
+        lines,
+        write(str, callback = () => {}) {
+          for (let i = 0; i < str.length; ++i) {
+            if (str[i] === '\n') {
+              this.cursor = this.cursor - (this.cursor % columns) + columns;
+            } else {
+              this.buffer[this.cursor] = str[i];
+              ++this.cursor;
+            }
           }
-        }
-      },
+          setTimeout(callback, 33);
+        },
+      });
+      const terminal = new Terminal(stream, {ttyPrint});
+      return {stream, terminal};
+    }
+
+    test('is not printing older consecutive status to non-interactive terminal', async () => {
+      const {stream, terminal} = prepare({
+        isTTY: false,
+        ttyPrint,
+      });
+      terminal.log('foo %s', 'smth');
+      terminal.status('status');
+      terminal.status('status2');
+      terminal.log('bar');
+      expect(stream.buffer.join('').trim()).toEqual('foo smth  bar');
+      await terminal.waitForUpdates();
+      expect(stream.buffer.join('').trim()).toEqual(
+        'foo smth  bar       status2',
+      );
     });
-    return {stream, terminal: new Terminal(stream)};
-  }
 
-  it('is not printing status to non-interactive terminal', () => {
-    const {stream, terminal} = prepare(false);
-    terminal.log('foo %s', 'smth');
-    terminal.status('status');
-    terminal.log('bar');
-    jest.runAllTimers();
-    expect(stream.buffer.join('').trim()).toEqual('foo smth  bar');
-  });
+    test('print status', async () => {
+      const {stream, terminal} = prepare({isTTY: true, ttyPrint});
+      terminal.log('foo');
+      terminal.status('status');
+      if (!ttyPrint) {
+        expect(stream.buffer.join('').trim()).toEqual('foo');
+      }
+      await terminal.waitForUpdates();
+      expect(stream.buffer.join('').trim()).toEqual('foo       status');
+    });
 
-  it('print status', () => {
-    const {stream, terminal} = prepare(true);
-    terminal.log('foo');
-    terminal.status('status');
-    jest.runAllTimers();
-    expect(stream.buffer.join('').trim()).toEqual('foo       status');
-  });
+    test('updates status when logging, single line', async () => {
+      const {stream, terminal} = prepare({isTTY: true, ttyPrint});
+      terminal.log('foo');
+      terminal.status('status');
+      terminal.status('status2');
+      terminal.log('bar');
+      if (!ttyPrint) {
+        expect(stream.buffer.join('').trim()).toEqual('foo       bar');
+      }
+      await terminal.waitForUpdates();
+      expect(stream.buffer.join('').trim()).toEqual(
+        'foo       bar       status2',
+      );
+      terminal.log('beep');
+      terminal.status('status3');
+      await terminal.waitForUpdates();
+      if (ttyPrint) {
+        expect(stream.buffer.join('').trim()).toEqual(
+          'foo       bar       beep      status3',
+        );
+      } else {
+        expect(stream.buffer.join('').trim()).toEqual(
+          'foo       bar       status2   beep',
+        );
+        await terminal.flush();
+        expect(stream.buffer.join('').trim()).toEqual(
+          'foo       bar       status2   beep      status3',
+        );
+      }
+    });
 
-  it('updates status when logging, single line', () => {
-    const {stream, terminal} = prepare(true);
-    terminal.log('foo');
-    terminal.status('status');
-    terminal.status('status2');
-    terminal.log('bar');
-    jest.runAllTimers();
-    expect(stream.buffer.join('').trim()).toEqual(
-      'foo       bar       status2',
-    );
-    terminal.log('beep');
-    jest.runAllTimers();
-    expect(stream.buffer.join('').trim()).toEqual(
-      'foo       bar       beep      status2',
-    );
-  });
+    test('updates status when logging, multi-line', async () => {
+      const {stream, terminal} = prepare({isTTY: true, ttyPrint});
+      terminal.log('foo');
+      terminal.status('status\nanother');
+      terminal.log('bar');
+      if (!ttyPrint) {
+        expect(stream.buffer.join('').trim()).toEqual('foo       bar');
+      }
+      await terminal.waitForUpdates();
+      expect(stream.buffer.join('').trim()).toEqual(
+        'foo       bar       status    another',
+      );
+    });
 
-  it('updates status when logging, multi-line', () => {
-    const {stream, terminal} = prepare(true);
-    terminal.log('foo');
-    terminal.status('status\nanother');
-    terminal.log('bar');
-    jest.runAllTimers();
-    expect(stream.buffer.join('').trim()).toEqual(
-      'foo       bar       status    another',
-    );
-  });
+    test('persists status', async () => {
+      const {stream, terminal} = prepare({isTTY: true, ttyPrint});
+      terminal.log('foo');
+      terminal.status('status');
+      terminal.persistStatus();
+      terminal.log('bar');
+      await terminal.waitForUpdates();
+      expect(stream.buffer.join('').trim()).toEqual('foo       status    bar');
+    });
 
-  it('persists status', () => {
-    const {stream, terminal} = prepare(true);
-    terminal.log('foo');
-    terminal.status('status');
-    terminal.persistStatus();
-    terminal.log('bar');
-    jest.runAllTimers();
-    expect(stream.buffer.join('').trim()).toEqual('foo       status    bar');
-  });
-});
+    test('flush- single line', async () => {
+      const {stream, terminal} = prepare({isTTY: true, ttyPrint});
+      terminal.log('foo');
+      terminal.status('status');
+      terminal.status('status2');
+      terminal.log('bar');
+      await terminal.flush();
+      expect(stream.buffer.join('').trim()).toEqual(
+        'foo       bar       status2',
+      );
+      terminal.log('beep');
+      terminal.status('status3');
+      await terminal.flush();
+      if (ttyPrint) {
+        expect(stream.buffer.join('').trim()).toEqual(
+          'foo       bar       beep      status3',
+        );
+      } else {
+        expect(stream.buffer.join('').trim()).toEqual(
+          'foo       bar       status2   beep      status3',
+        );
+      }
+    });
+
+    test('flush- multi-line', async () => {
+      const {stream, terminal} = prepare({isTTY: true, ttyPrint});
+      terminal.log('foo');
+      terminal.status('status\nanother');
+      terminal.log('bar');
+      await terminal.flush();
+      expect(stream.buffer.join('').trim()).toEqual(
+        'foo       bar       status    another',
+      );
+    });
+  },
+);

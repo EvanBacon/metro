@@ -9,7 +9,7 @@
  */
 
 import type {RequireContextParams} from '../../ModuleGraph/worker/collectDependencies';
-import type {Dependency, TransformResultDependency} from '../types.flow';
+import type {ResolvedDependency, TransformResultDependency} from '../types';
 
 import {buildSubgraph} from '../buildSubgraph';
 import nullthrows from 'nullthrows';
@@ -17,17 +17,24 @@ import nullthrows from 'nullthrows';
 const makeTransformDep = (
   name: string,
   asyncType: null | 'weak' | 'async' = null,
+  isESMImport: boolean = false,
   contextParams?: RequireContextParams,
 ): TransformResultDependency => ({
   name,
-  data: {key: 'key-' + name, asyncType, locs: [], contextParams},
+  data: {
+    key: 'key-' + name + (isESMImport ? '-import' : ''),
+    asyncType,
+    isESMImport,
+    locs: [],
+    contextParams,
+  },
 });
 
 class BadTransformError extends Error {}
 class DoesNotExistError extends Error {}
 
 describe('GraphTraversal', () => {
-  let transformDeps: Map<string, $ReadOnlyArray<TransformResultDependency>>;
+  let transformDeps: Map<string, ReadonlyArray<TransformResultDependency>>;
 
   let params;
 
@@ -40,7 +47,7 @@ describe('GraphTraversal', () => {
       [
         '/entryWithContext',
         [
-          makeTransformDep('virtual', null, {
+          makeTransformDep('virtual', null, false, {
             filter: {
               pattern: 'contextMatch.*',
               flags: 'i',
@@ -63,7 +70,7 @@ describe('GraphTraversal', () => {
         }
         return {
           filePath: `/${dependency.name}`,
-          type: 'sourceFile',
+          type: 'sourceFile' as const,
         };
       }),
       transform: jest.fn(async (path, requireContext) => {
@@ -77,7 +84,8 @@ describe('GraphTraversal', () => {
         };
       }),
       shouldTraverse: jest.fn(
-        (dependency: Dependency) => dependency.data.data.asyncType !== 'weak',
+        (dependency: ResolvedDependency) =>
+          dependency.data.data.asyncType !== 'weak',
       ),
     };
   });

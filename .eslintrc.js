@@ -18,6 +18,7 @@ module.exports = {
       rules: {
         'babel/quotes': 'off',
         'lint/flow-function-shape': 'off',
+        'no-unused-vars': 'off',
       },
     },
     {
@@ -39,6 +40,33 @@ module.exports = {
       rules: {
         'babel/func-params-comma-dangle': 'off',
         'import/no-extraneous-dependencies': 'off',
+      },
+    },
+    {
+      files: ['packages/**/*.js'],
+      rules: {
+        'import/no-commonjs': 'error',
+      },
+    },
+    {
+      files: [
+        'packages/metro/src/integration_tests/**/*.js',
+        'packages/metro-runtime/**/*.js',
+        '**/__tests__/**/*.js',
+        '**/__mocks__/**/*.js',
+        '**/__fixtures__/**/*.js',
+      ],
+      rules: {
+        'import/no-commonjs': 'off',
+      },
+    },
+    {
+      files: [
+        // flow-api-translator doesn't support translating `empty`
+        'packages/metro-file-map/types/flow-types.d.ts',
+      ],
+      rules: {
+        '@typescript-eslint/no-explicit-any': 'off',
       },
     },
   ],

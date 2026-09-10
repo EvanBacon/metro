@@ -11,17 +11,17 @@
 
 import type {ChromeHeapSnapshot} from './ChromeHeapSnapshot';
 import type {HermesFunctionOffsets, MixedSourceMap} from 'metro-source-map';
+import type {Writable} from 'node:stream';
 
+import {ChromeHeapSnapshotProcessor} from './ChromeHeapSnapshot';
+import GoogleIgnoreListConsumer from './GoogleIgnoreListConsumer';
+import SourceMetadataMapConsumer from './SourceMetadataMapConsumer';
+import invariant from 'invariant';
+import fs from 'node:fs';
+import path from 'node:path';
+import nullthrows from 'nullthrows';
 // flowlint-next-line untyped-type-import:off
 import {typeof SourceMapConsumer} from 'source-map';
-
-const {ChromeHeapSnapshotProcessor} = require('./ChromeHeapSnapshot');
-const GoogleIgnoreListConsumer = require('./GoogleIgnoreListConsumer');
-const SourceMetadataMapConsumer = require('./SourceMetadataMapConsumer');
-const fs = require('fs');
-const invariant = require('invariant');
-const nullthrows = require('nullthrows');
-const path = require('path');
 
 type SingleMapModuleIds = {
   segmentId: number,
@@ -30,11 +30,11 @@ type SingleMapModuleIds = {
 };
 
 type ContextOptionsInput = {
-  +nameSource?: 'function_names' | 'identifier_names',
-  +inputLineStart?: number,
-  +inputColumnStart?: number,
-  +outputLineStart?: number,
-  +outputColumnStart?: number,
+  readonly nameSource?: 'function_names' | 'identifier_names',
+  readonly inputLineStart?: number,
+  readonly inputColumnStart?: number,
+  readonly outputLineStart?: number,
+  readonly outputColumnStart?: number,
   ...
 };
 
@@ -65,11 +65,13 @@ type ChromeTrace = {
 };
 
 type HermesMinidumpCrashInfo = {
-  +callstack: $ReadOnlyArray<HermesMinidumpStackFrame | NativeCodeStackFrame>,
+  readonly callstack: ReadonlyArray<
+    HermesMinidumpStackFrame | NativeCodeStackFrame,
+  >,
   ...
 };
 
-type HermesMinidumpStackFrame = $ReadOnly<{
+type HermesMinidumpStackFrame = Readonly<{
   ByteCodeOffset: number,
   FunctionID: number,
   // NOTE: CJSModuleOffset has been renamed to SegmentID. Support both formats for now.
@@ -81,25 +83,25 @@ type HermesMinidumpStackFrame = $ReadOnly<{
 }>;
 
 type HermesCoverageInfo = {
-  +executedFunctions: $ReadOnlyArray<HermesCoverageStackFrame>,
+  readonly executedFunctions: ReadonlyArray<HermesCoverageStackFrame>,
 };
 
-type HermesCoverageStackFrame = $ReadOnly<{
+type HermesCoverageStackFrame = Readonly<{
   line: number, // SegmentID or zero-based line,
   column: number, // VirtualOffset or zero-based column,
   SourceURL: ?string,
 }>;
 
-type NativeCodeStackFrame = $ReadOnly<{
+type NativeCodeStackFrame = Readonly<{
   NativeCode: true,
   StackFrameRegOffs: string,
 }>;
 
-type SymbolicatedStackTrace = $ReadOnlyArray<
+type SymbolicatedStackTrace = ReadonlyArray<
   SymbolicatedStackFrame | NativeCodeStackFrame,
 >;
 
-type SymbolicatedStackFrame = $ReadOnly<{
+type SymbolicatedStackFrame = Readonly<{
   line: ?number,
   column: ?number,
   source: ?string,
@@ -114,12 +116,12 @@ const UNKNOWN_MODULE_IDS: SingleMapModuleIds = {
 };
 
 class SymbolicationContext<ModuleIdsT> {
-  +options: {
-    +nameSource: 'function_names' | 'identifier_names',
-    +inputLineStart: number,
-    +inputColumnStart: number,
-    +outputLineStart: number,
-    +outputColumnStart: number,
+  readonly options: {
+    readonly nameSource: 'function_names' | 'identifier_names',
+    readonly inputLineStart: number,
+    readonly inputColumnStart: number,
+    readonly outputLineStart: number,
+    readonly outputColumnStart: number,
     ...
   };
 
@@ -137,8 +139,10 @@ class SymbolicationContext<ModuleIdsT> {
         'inputColumnStart',
         'outputLineStart',
         'outputColumnStart',
-      ]) {
+      ] as const) {
         if (options[option] != null) {
+          /* $FlowFixMe[incompatible-type] error found during natural inference
+           * roll-out. See https://fburl.com/workplace/tc9m3tcf */
           this.options[option] = options[option];
         }
       }
@@ -270,8 +274,8 @@ class SymbolicationContext<ModuleIdsT> {
       stdout,
       stderr,
     }: {
-      stdout: stream$Writable,
-      stderr: stream$Writable,
+      stdout: Writable,
+      stderr: Writable,
       ...
     },
   ): void {
@@ -494,20 +498,20 @@ class SymbolicationContext<ModuleIdsT> {
 }
 
 class SingleMapSymbolicationContext extends SymbolicationContext<SingleMapModuleIds> {
-  +_segments: {
-    +[id: string]: {
+  readonly _segments: {
+    readonly [id: string]: {
       // $FlowFixMe[value-as-type]
-      +consumer: SourceMapConsumer,
-      +moduleOffsets: $ReadOnlyArray<number>,
-      +sourceFunctionsConsumer: ?SourceMetadataMapConsumer,
-      +hermesOffsets: ?HermesFunctionOffsets,
-      +googleIgnoreListConsumer: GoogleIgnoreListConsumer,
+      readonly consumer: SourceMapConsumer,
+      readonly moduleOffsets: ReadonlyArray<number>,
+      readonly sourceFunctionsConsumer: ?SourceMetadataMapConsumer,
+      readonly hermesOffsets: ?HermesFunctionOffsets,
+      readonly googleIgnoreListConsumer: GoogleIgnoreListConsumer,
     },
     ...
   };
-  +_legacyFormat: boolean;
+  readonly _legacyFormat: boolean;
   // $FlowFixMe[value-as-type]
-  +_SourceMapConsumer: SourceMapConsumer;
+  readonly _SourceMapConsumer: SourceMapConsumer;
 
   constructor(
     // $FlowFixMe[value-as-type]
@@ -724,10 +728,10 @@ class SingleMapSymbolicationContext extends SymbolicationContext<SingleMapModule
 }
 
 class DirectorySymbolicationContext extends SymbolicationContext<string> {
-  +_fileMaps: Map<string, SingleMapSymbolicationContext>;
-  +_rootDir: string;
+  readonly _fileMaps: Map<string, SingleMapSymbolicationContext>;
+  readonly _rootDir: string;
   // $FlowFixMe[value-as-type]
-  +_SourceMapConsumer: SourceMapConsumer;
+  readonly _SourceMapConsumer: SourceMapConsumer;
 
   constructor(
     // $FlowFixMe[value-as-type]
@@ -904,8 +908,8 @@ function symbolicateChromeTrace<ModuleIdsT>(
     stdout,
     stderr,
   }: {
-    stdout: stream$Writable,
-    stderr: stream$Writable,
+    stdout: Writable,
+    stderr: Writable,
     ...
   },
   context: SymbolicationContext<ModuleIdsT>,
@@ -913,11 +917,11 @@ function symbolicateChromeTrace<ModuleIdsT>(
   return context.symbolicateChromeTrace(traceFile, {stdout, stderr});
 }
 
-module.exports = {
+export {
   createContext,
   unstable_createDirectoryContext,
   getOriginalPositionFor,
-  parseFileName: parseSingleMapFileName,
+  parseSingleMapFileName as parseFileName,
   symbolicate,
   symbolicateProfilerMap,
   symbolicateAttribution,

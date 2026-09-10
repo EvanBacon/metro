@@ -9,25 +9,20 @@
  * @oncall react_native
  */
 
-'use strict';
-
-import type {
-  ModuleTransportLike,
-  RamModuleTransport,
-} from '../../shared/types.flow';
-import type {Module, ReadOnlyGraph, SerializerOptions} from '../types.flow';
+import type {ModuleTransportLike, RamModuleTransport} from '../../shared/types';
+import type {Module, ReadOnlyGraph, SerializerOptions} from '../types';
 import type {SourceMapGeneratorOptions} from './sourceMapGenerator';
-import type {GetTransformOptions} from 'metro-config/src/configTypes.flow.js';
+import type {GetTransformOptions} from 'metro-config';
 
-const {createRamBundleGroups} = require('../../Bundler/util');
-const getAppendScripts = require('../../lib/getAppendScripts');
-const getTransitiveDependencies = require('./helpers/getTransitiveDependencies');
-const {isJsModule, wrapModule} = require('./helpers/js');
-const {sourceMapObject} = require('./sourceMapObject');
-const nullthrows = require('nullthrows');
-const path = require('path');
+import {createRamBundleGroups} from '../../Bundler/util';
+import getAppendScripts from '../../lib/getAppendScripts';
+import getTransitiveDependencies from './helpers/getTransitiveDependencies';
+import {isJsModule, wrapModule} from './helpers/js';
+import {sourceMapObject} from './sourceMapObject';
+import path from 'node:path';
+import nullthrows from 'nullthrows';
 
-type Options = $ReadOnly<{
+type Options = Readonly<{
   ...SerializerOptions,
   ...SourceMapGeneratorOptions,
   getTransformOptions: ?GetTransformOptions,
@@ -36,18 +31,18 @@ type Options = $ReadOnly<{
 
 export type RamBundleInfo = {
   getDependencies: string => Set<string>,
-  startupModules: $ReadOnlyArray<ModuleTransportLike>,
-  lazyModules: $ReadOnlyArray<ModuleTransportLike>,
+  startupModules: ReadonlyArray<ModuleTransportLike>,
+  lazyModules: ReadonlyArray<ModuleTransportLike>,
   groups: Map<number, Set<number>>,
 };
 
-async function getRamBundleInfo(
+export default async function getRamBundleInfo(
   entryPoint: string,
-  pre: $ReadOnlyArray<Module<>>,
+  pre: ReadonlyArray<Module<>>,
   graph: ReadOnlyGraph<>,
   options: Options,
 ): Promise<RamBundleInfo> {
-  let modules: $ReadOnlyArray<Module<>> = [
+  let modules: ReadonlyArray<Module<>> = [
     ...pre,
     ...graph.dependencies.values(),
   ];
@@ -65,6 +60,7 @@ async function getRamBundleInfo(
         excludeSource: options.excludeSource,
         processModuleFilter: options.processModuleFilter,
         shouldAddToIgnoreList: options.shouldAddToIgnoreList,
+        getSourceUrl: options.getSourceUrl,
       }),
       name: path.basename(module.path),
       sourcePath: module.path,
@@ -145,10 +141,12 @@ async function _getRamOptions(
   },
   getDependencies: string => Iterable<string>,
   getTransformOptions: ?GetTransformOptions,
-): Promise<{
-  +preloadedModules: {[string]: true, ...},
-  +ramGroups: Array<string>,
-}> {
+): Promise<
+  Readonly<{
+    preloadedModules: Readonly<{[string]: true, ...}>,
+    ramGroups: ReadonlyArray<string>,
+  }>,
+> {
   if (getTransformOptions == null) {
     return {
       preloadedModules: {},
@@ -159,16 +157,15 @@ async function _getRamOptions(
   const {preloadedModules, ramGroups} = await getTransformOptions(
     [entryFile],
     {dev: options.dev, hot: true, platform: options.platform},
-    /* $FlowFixMe(>=0.99.0 site=react_native_fb) This comment suppresses an
+    /* $FlowFixMe[incompatible-type](>=0.99.0 site=react_native_fb) This comment suppresses an
      * error found when Flow v0.99 was deployed. To see the error, delete this
      * comment and run Flow. */
     async (x: string) => Array.from(getDependencies),
   );
 
   return {
+    // $FlowFixMe[sketchy-null-bool]
     preloadedModules: preloadedModules || {},
     ramGroups: ramGroups || [],
   };
 }
-
-module.exports = getRamBundleInfo;

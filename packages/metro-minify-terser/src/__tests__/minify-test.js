@@ -12,6 +12,7 @@
 'use strict';
 
 import type {BasicSourceMap} from 'metro-source-map';
+import type {MinifierOptions} from 'metro-transform-worker';
 
 const minify = require('..');
 
@@ -34,7 +35,7 @@ function getFakeMap(): BasicSourceMap {
   };
 }
 
-const baseOptions = {
+const baseOptions: MinifierOptions = {
   code: '',
   map: getFakeMap(),
   filename: '',
@@ -50,18 +51,18 @@ describe('Minification:', () => {
 
   beforeEach(() => {
     terser = require('terser');
-    /* $FlowFixMe(>=0.99.0 site=react_native_fb) This comment suppresses an
+    /* $FlowFixMe[incompatible-type](>=0.99.0 site=react_native_fb) This comment suppresses an
      * error found when Flow v0.99 was deployed. To see the error, delete this
      * comment and run Flow. */
     terser.minify.mockClear();
-    /* $FlowFixMe(>=0.99.0 site=react_native_fb) This comment suppresses an
+    /* $FlowFixMe[incompatible-type](>=0.99.0 site=react_native_fb) This comment suppresses an
      * error found when Flow v0.99 was deployed. To see the error, delete this
      * comment and run Flow. */
     terser.minify.mockResolvedValue({code: '', map: '{}'});
     map = getFakeMap();
   });
 
-  it('passes file name, code, and source map to `terser`', async () => {
+  test('passes file name, code, and source map to `terser`', async () => {
     await minify({
       ...baseOptions,
       code,
@@ -80,8 +81,8 @@ describe('Minification:', () => {
     );
   });
 
-  it('returns the code provided by terser', async () => {
-    /* $FlowFixMe(>=0.99.0 site=react_native_fb) This comment suppresses an
+  test('returns the code provided by terser', async () => {
+    /* $FlowFixMe[incompatible-type](>=0.99.0 site=react_native_fb) This comment suppresses an
      * error found when Flow v0.99 was deployed. To see the error, delete this
      * comment and run Flow. */
     terser.minify.mockResolvedValue({code, map: '{}'});
@@ -89,8 +90,8 @@ describe('Minification:', () => {
     expect(result.code).toBe(code);
   });
 
-  it('parses the source map object provided by terser and sets the sources property', async () => {
-    /* $FlowFixMe(>=0.99.0 site=react_native_fb) This comment suppresses an
+  test('parses the source map object provided by terser and sets the sources property', async () => {
+    /* $FlowFixMe[incompatible-type](>=0.99.0 site=react_native_fb) This comment suppresses an
      * error found when Flow v0.99 was deployed. To see the error, delete this
      * comment and run Flow. */
     terser.minify.mockResolvedValue({map: JSON.stringify(map), code: ''});

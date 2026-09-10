@@ -9,31 +9,25 @@
  * @oncall react_native
  */
 
-'use strict';
-
 import type Bundler from '../Bundler';
-import type DeltaBundler, {Module} from '../DeltaBundler';
-import type {TransformInputOptions} from '../DeltaBundler/types.flow';
-import type {ResolverInputOptions} from '../shared/types.flow';
-import type {ConfigT} from 'metro-config/src/configTypes.flow';
+import type {Module, default as DeltaBundler} from '../DeltaBundler';
+import type {TransformInputOptions} from '../DeltaBundler/types';
+import type {ResolverInputOptions} from '../shared/types';
+import type {ConfigT} from 'metro-config';
 
 import CountingSet from './CountingSet';
+import countLines from './countLines';
+import getPreludeCode from './getPreludeCode';
+import * as transformHelpers from './transformHelpers';
+import * as defaults from 'metro-config/private/defaults/defaults';
 
-const countLines = require('./countLines');
-const getPreludeCode = require('./getPreludeCode');
-const transformHelpers = require('./transformHelpers');
-const defaults = require('metro-config/src/defaults/defaults');
-
-async function getPrependedScripts(
+export default async function getPrependedScripts(
   config: ConfigT,
-  options: $Diff<
-    TransformInputOptions,
-    {type: $PropertyType<TransformInputOptions, 'type'>, ...},
-  >,
+  options: Omit<TransformInputOptions, 'type'>,
   resolverOptions: ResolverInputOptions,
   bundler: Bundler,
   deltaBundler: DeltaBundler<>,
-): Promise<$ReadOnlyArray<Module<>>> {
+): Promise<ReadonlyArray<Module<>>> {
   // Get all the polyfills from the relevant option params (the
   // `getPolyfills()` method and the `polyfillModuleNames` variable).
   const polyfillModuleNames = config.serializer
@@ -70,6 +64,8 @@ async function getPrependedScripts(
       lazy: false,
       unstable_enablePackageExports:
         config.resolver.unstable_enablePackageExports,
+      unstable_incrementalResolution:
+        config.resolver.unstable_incrementalResolution,
       shallow: false,
     },
   );
@@ -79,6 +75,8 @@ async function getPrependedScripts(
       dev: options.dev,
       globalPrefix: config.transformer.globalPrefix,
       requireCycleIgnorePatterns: config.resolver.requireCycleIgnorePatterns,
+      unstable_forceFullRefreshPatterns:
+        config.resolver.unstable_forceFullRefreshPatterns,
     }),
     ...dependencies.values(),
   ];
@@ -88,16 +86,19 @@ function _getPrelude({
   dev,
   globalPrefix,
   requireCycleIgnorePatterns,
+  unstable_forceFullRefreshPatterns,
 }: {
   dev: boolean,
   globalPrefix: string,
-  requireCycleIgnorePatterns: $ReadOnlyArray<RegExp>,
+  requireCycleIgnorePatterns: ReadonlyArray<RegExp>,
+  unstable_forceFullRefreshPatterns: ReadonlyArray<RegExp>,
   ...
 }): Module<> {
   const code = getPreludeCode({
     isDev: dev,
     globalPrefix,
     requireCycleIgnorePatterns,
+    unstable_forceFullRefreshPatterns,
   });
   const name = '__prelude__';
 
@@ -118,5 +119,3 @@ function _getPrelude({
     ],
   };
 }
-
-module.exports = getPrependedScripts;
